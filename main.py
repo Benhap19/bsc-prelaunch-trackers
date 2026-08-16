@@ -1,25 +1,187 @@
+import threading
+
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
-from db import init_db,all_projects
 
-app=FastAPI(title="BSC Pre-Launch Tracker")
+from db import init_db, all_projects
+from scanner import run
+
+
+app = FastAPI(
+    title="BSC Pre-Launch Radar",
+    description="BSC project discovery and alert system"
+)
+
+
 init_db()
+
+
+def start_scanner():
+    thread = threading.Thread(
+        target=run,
+        daemon=True
+    )
+
+    thread.start()
+
+
+@app.on_event("startup")
+def startup_event():
+    start_scanner()
+
 
 @app.get("/api/projects")
 def projects():
     return all_projects()
 
-@app.get("/",response_class=HTMLResponse)
+
+@app.get("/", response_class=HTMLResponse)
 def dashboard():
-    rows=all_projects()
-    body=""
-    for p in rows:
-        body += f"<tr><td>{p['name']}</td><td>{p['stage']}</td><td>{p['score']}</td>"
-        body += f"<td><a href='{p['url']}' target='_blank'>DexScreener</a></td>"
-        body += f"<td><a href='https://bscscan.com/token/{p['address']}' target='_blank'>BscScan</a></td></tr>"
-    html='''<!doctype html><html><head><meta charset="utf-8"><title>BSC Tracker</title>
-<style>body{font-family:Arial;max-width:1100px;margin:40px auto}table{width:100%;border-collapse:collapse}td,th{padding:10px;border-bottom:1px solid #ddd}</style>
-</head><body><h1>BSC Pre-Launch Tracker</h1>
-<p>Public-signal discovery dashboard. Not an investment signal.</p>
-<table><tr><th>Project</th><th>Stage</th><th>Score</th><th>Market</th><th>Explorer</th></tr>''' + body + '''</table></body></html>'''
+
+    projects = all_projects()
+
+    body = ""
+
+    for project in projects:
+
+        body += f"""
+        <tr>
+            <td>{project['name']}</td>
+
+            <td>
+                <strong>{project['stage']}</strong>
+            </td>
+
+            <td>
+                <strong>{project['score']}/100</strong>
+            </td>
+
+            <td>
+                <a href="{project['url']}" target="_blank">
+                    DexScreener
+                </a>
+            </td>
+
+            <td>
+                <a href="https://bscscan.com/token/{project['address']}"
+                   target="_blank">
+                    BscScan
+                </a>
+            </td>
+
+            <td>
+                {project['x_url'] or '-'}
+            </td>
+        </tr>
+        """
+
+    html = f"""
+    <!DOCTYPE html>
+
+    <html>
+
+    <head>
+
+        <meta charset="UTF-8">
+
+        <meta name="viewport"
+              content="width=device-width, initial-scale=1">
+
+        <title>BSC Pre-Launch Radar</title>
+
+        <style>
+
+            body {{
+                font-family: Arial, sans-serif;
+                margin: 20px;
+                background: #f5f5f5;
+            }}
+
+            .container {{
+                max-width: 1200px;
+                margin: auto;
+            }}
+
+            h1 {{
+                margin-bottom: 5px;
+            }}
+
+            .card {{
+                background: white;
+                padding: 20px;
+                border-radius: 12px;
+                margin-bottom: 20px;
+            }}
+
+            table {{
+                width: 100%;
+                border-collapse: collapse;
+                background: white;
+            }}
+
+            th, td {{
+                padding: 12px;
+                border-bottom: 1px solid #ddd;
+                text-align: left;
+            }}
+
+            th {{
+                background: #111;
+                color: white;
+            }}
+
+            a {{
+                text-decoration: none;
+            }}
+
+        </style>
+
+    </head>
+
+    <body>
+
+        <div class="container">
+
+            <div class="card">
+
+                <h1>🚀 BSC Pre-Launch Radar</h1>
+
+                <p>
+                    Automated BSC project discovery and scoring.
+                </p>
+
+                <p>
+                    Projects tracked:
+                    <strong>{len(projects)}</strong>
+                </p>
+
+            </div>
+
+
+            <div class="card">
+
+                <table>
+
+                    <tr>
+                        <th>Project</th>
+                        <th>Stage</th>
+                        <th>Score</th>
+                        <th>DEX</th>
+                        <th>Contract</th>
+                        <th>X</th>
+                    </tr>
+
+                    {body}
+
+                </table>
+
+            </div>
+
+        </div>
+
+    </body>
+
+    </html>
+    """
+
     return html
