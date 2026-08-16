@@ -1,6 +1,6 @@
 import os,time,requests
 from dotenv import load_dotenv
-from .db import init_db,upsert
+from db import init_db,upsert
 load_dotenv()
 API="https://api.dexscreener.com/token-profiles/latest/v1"
 
