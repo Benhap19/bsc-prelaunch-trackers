@@ -127,21 +127,30 @@ def scan():
     print("🔎 Scanning BSC projects...")
 
     try:
+        headers = {
+            "User-Agent": "BSC-PreLaunch-Radar/1.0"
+        }
+
         response = requests.get(
             DEX_API,
-            timeout=20
+            headers=headers,
+            timeout=30
         )
 
         if response.status_code == 429:
-            print("⚠️ DEX Screener rate limit reached.")
-            print("Waiting before next scan...")
+            print("⚠️ DexScreener rate limit reached. Skipping this scan.")
             return
 
         response.raise_for_status()
+
         profiles = response.json()
 
+        if not isinstance(profiles, list):
+            print("⚠️ Unexpected DexScreener response.")
+            return
+
     except requests.RequestException as e:
-        print("⚠️ DEX Screener API error:", e)
+        print("⚠️ DexScreener API error:", e)
         return
 
     except Exception as e:
@@ -173,30 +182,24 @@ def scan():
 
         upsert(project)
 
-        # Alert only high-scoring new projects.
         if score >= 60 and address not in known_alerts:
-
             known_alerts.add(address)
 
             chat_id = os.getenv("TELEGRAM_CHAT_ID")
 
             if chat_id:
-
                 message = (
-                    "🚨 NEW BSC PROJECT DETECTED\n\n"
+                    "🚨 NEW BSC PROJECT DETECTED!\n\n"
                     f"Project: {project['name']}\n"
                     f"Stage: {stage}\n"
-                    f"Score: {score}/100\n\n"
+                    f"Score: {score}/100\n"
                     f"Website: {project['url'] or 'Not available'}\n"
                     f"X: {project['x_url'] or 'Not available'}\n"
                     f"Telegram: {project['telegram_url'] or 'Not available'}\n\n"
-                    f"Contract:\n{address}\n\n"
-                    "⚠️ Research before interacting."
+                    f"Contract: {address}"
                 )
 
                 send_message(chat_id, message)
-
-    print("✅ Scan completed.")
 
 
 def run():
