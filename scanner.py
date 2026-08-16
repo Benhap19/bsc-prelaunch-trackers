@@ -123,32 +123,30 @@ def score_project(profile):
 
     return min(score, 100), stage, link_types
 
-
 def scan():
     print("🔎 Scanning BSC projects...")
 
     try:
-    response = requests.get(
-        DEX_API,
-        timeout=20
-    )
+        response = requests.get(
+            DEX_API,
+            timeout=20
+        )
 
-    if response.status_code == 429:
-        print("⚠️ DEX Screener rate limit reached.")
-        print("Waiting before next scan...")
+        if response.status_code == 429:
+            print("⚠️ DEX Screener rate limit reached.")
+            print("Waiting before next scan...")
+            return
+
+        response.raise_for_status()
+        profiles = response.json()
+
+    except requests.RequestException as e:
+        print("⚠️ DEX Screener API error:", e)
         return
 
-    response.raise_for_status()
-
-    profiles = response.json()
-
-except requests.RequestException as e:
-    print("⚠️ DEX Screener API error:", e)
-    return
-
-except Exception as e:
-    print("⚠️ Scanner error:", e)
-    return
+    except Exception as e:
+        print("⚠️ Scanner error:", e)
+        return
 
     for profile in profiles:
 
