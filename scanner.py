@@ -134,16 +134,20 @@ def scan():
     )
 
     if response.status_code == 429:
-        print("⚠️ DEX Screener rate limit reached. Waiting 5 minutes...")
-        time.sleep(300)
+        print("⚠️ DEX Screener rate limit reached.")
+        print("Waiting before next scan...")
         return
 
     response.raise_for_status()
 
     profiles = response.json()
 
+except requests.RequestException as e:
+    print("⚠️ DEX Screener API error:", e)
+    return
+
 except Exception as e:
-    print("API Error:", e)
+    print("⚠️ Scanner error:", e)
     return
 
     for profile in profiles:
