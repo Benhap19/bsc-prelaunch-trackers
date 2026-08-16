@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
-from .db import init_db,all_projects
+from db import init_db,all_projects
 
 app=FastAPI(title="BSC Pre-Launch Tracker")
 init_db()
