@@ -7,10 +7,11 @@ from db import init_db, upsert, all_projects
 load_dotenv()
 
 DEX_API = "https://api.dexscreener.com/token-profiles/latest/v1"
-TELEGRAM_API = "https://api.telegram.org/bot{}"
+DEX_PAIRS_API = "https://api.dexscreener.com/latest/dex/tokens/{}"
 
+TELEGRAM_API = "https://api.telegram.org/bot{}"
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-SCAN_INTERVAL = int(os.getenv("SCAN_INTERVAL_SECONDS", "120"))
+SCAN_INTERVAL = int(os.getenv("SCAN_INTERVAL_SECONDS", "300"))
 
 known_alerts = set()
 
@@ -21,82 +22,39 @@ def telegram(method, data=None):
 
     try:
         url = TELEGRAM_API.format(BOT_TOKEN) + "/" + method
-        response = requests.post(url, data=data or {}, timeout=20)
+        response = requests.post(
+            url,
+            data=data or {},
+            timeout=20
+        )
+
+        if response.status_code != 200:
+            print("Telegram error:", response.status_code)
+
         return response.json()
+
     except Exception as e:
         print("Telegram error:", e)
         return None
 
 
 def send_message(chat_id, text):
-    return telegram("sendMessage", {
-        "chat_id": chat_id,
-        "text": text,
-        "disable_web_page_preview": True
-    })
-
-
-def get_updates():
-    return telegram("getUpdates", {"timeout": 5})
-
-
-def handle_telegram():
-    """Learn the user's chat ID and respond to commands."""
-    result = get_updates()
-
-    if not result or not result.get("ok"):
-        return
-
-    for update in result.get("result", []):
-        message = update.get("message")
-
-        if not message:
-            continue
-
-        chat = message.get("chat", {})
-        chat_id = chat.get("id")
-        text = message.get("text", "")
-
-        if not chat_id:
-            continue
-
-        if text.startswith("/start"):
-            send_message(
-                chat_id,
-                "🚀 BSC Pre-Launch Radar is connected!\n\n"
-                "Your Chat ID has been detected.\n\n"
-                "Commands:\n"
-                "/id - show your Chat ID\n"
-                "/status - show tracker status"
-            )
-
-            os.environ["TELEGRAM_CHAT_ID"] = str(chat_id)
-
-        elif text.startswith("/id"):
-            send_message(
-                chat_id,
-                f"🆔 Your Telegram Chat ID:\n{chat_id}"
-            )
-
-            os.environ["TELEGRAM_CHAT_ID"] = str(chat_id)
-
-        elif text.startswith("/status"):
-            projects = all_projects()
-
-            send_message(
-                chat_id,
-                f"📡 BSC Radar Status\n\n"
-                f"Projects tracked: {len(projects)}\n"
-                f"Scanner interval: {SCAN_INTERVAL} seconds"
-            )
+    return telegram(
+        "sendMessage",
+        {
+            "chat_id": chat_id,
+            "text": text,
+            "disable_web_page_preview": True
+        }
+    )
 
 
 def score_project(profile):
-    score = 10
+    score = 0
     links = profile.get("links") or []
 
     link_types = {
-        (x.get("type") or "").lower(): x.get("url", "")
+        (x.get("type") or "").lower()
         for x in links
     }
 
@@ -121,24 +79,26 @@ def score_project(profile):
     else:
         stage = "🔵 EARLY"
 
-    return min(score, 100), stage, link_types
+    return min(score, 100), stage, links
+
 
 def scan():
     print("🔎 Scanning BSC projects...")
 
     try:
-        headers = {
-            "User-Agent": "BSC-PreLaunch-Radar/1.0"
-        }
-
         response = requests.get(
             DEX_API,
-            headers=headers,
-            timeout=30
+            timeout=20,
+            headers={
+                "User-Agent": "BSC-PreLaunch-Radar/1.0"
+            }
         )
 
+        print("DexScreener status:", response.status_code)
+
         if response.status_code == 429:
-            print("⚠️ DexScreener rate limit reached. Skipping this scan.")
+            print("⚠️ DexScreener rate limit reached.")
+            print("Waiting until next scan...")
             return
 
         response.raise_for_status()
@@ -146,7 +106,7 @@ def scan():
         profiles = response.json()
 
         if not isinstance(profiles, list):
-            print("⚠️ Unexpected DexScreener response.")
+            print("⚠️ Unexpected API response.")
             return
 
     except requests.RequestException as e:
@@ -159,7 +119,7 @@ def scan():
 
     for profile in profiles:
 
-        if profile.get("chainId") != "bsc":
+        if profile.get("chainId", "").lower() != "bsc":
             continue
 
         address = profile.get("tokenAddress")
@@ -174,51 +134,63 @@ def scan():
             "name": profile.get("description") or address[:10],
             "description": profile.get("description") or "",
             "url": profile.get("url") or "",
-            "x_url": links.get("twitter") or links.get("x") or "",
-            "telegram_url": links.get("telegram") or "",
+            "x_url": "",
+            "telegram_url": "",
             "score": score,
             "stage": stage
         }
 
-        upsert(project)
+        for link in links:
+            link_type = (link.get("type") or "").lower()
+            link_url = link.get("url") or ""
+
+            if link_type in ("twitter", "x"):
+                project["x_url"] = link_url
+
+            if link_type == "telegram":
+                project["telegram_url"] = link_url
+
+        try:
+            upsert(project)
+        except Exception as e:
+            print("⚠️ Database error:", e)
+            continue
 
         if score >= 60 and address not in known_alerts:
+
             known_alerts.add(address)
 
             chat_id = os.getenv("TELEGRAM_CHAT_ID")
 
             if chat_id:
+
                 message = (
                     "🚨 NEW BSC PROJECT DETECTED!\n\n"
                     f"Project: {project['name']}\n"
                     f"Stage: {stage}\n"
                     f"Score: {score}/100\n"
+                    f"Contract: {address}\n"
                     f"Website: {project['url'] or 'Not available'}\n"
                     f"X: {project['x_url'] or 'Not available'}\n"
-                    f"Telegram: {project['telegram_url'] or 'Not available'}\n\n"
-                    f"Contract: {address}"
+                    f"Telegram: {project['telegram_url'] or 'Not available'}"
                 )
 
                 send_message(chat_id, message)
 
+    print("✅ Scan completed.")
+
 
 def run():
-
     init_db()
 
     print("🚀 BSC Pre-Launch Radar started")
+    print(f"⏱ Scanner interval: {SCAN_INTERVAL} seconds")
 
     while True:
+        scan()
 
         try:
-            handle_telegram()
-            scan()
-
-        except Exception as e:
-            print("Scanner error:", e)
-
-        time.sleep(SCAN_INTERVAL)
-
-
-if __name__ == "__main__":
-    run()
+            time.sleep(SCAN_INTERVAL)
+        except KeyboardInterrupt:
+            print("🛑 Scanner stopped.")
+            break
