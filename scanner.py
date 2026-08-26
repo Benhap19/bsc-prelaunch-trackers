@@ -190,7 +190,50 @@ def telegram_loop():
             print("⚠️ Telegram loop error:", e)
             time.sleep(5)
 
+def handle_telegram():
+    result = get_updates()
 
+    if not result or not result.get("ok"):
+        return
+
+    for update in result.get("result", []):
+        message = update.get("message")
+
+        if not message:
+            continue
+
+        chat = message.get("chat", {})
+        chat_id = chat.get("id")
+        text = message.get("text", "")
+
+        if not chat_id:
+            continue
+
+        if text.startswith("/start"):
+            send_message(
+                chat_id,
+                "🚀 BSC Pre-Launch Radar is connected!\n\n"
+                "Your Chat ID has been detected.\n\n"
+                "Commands:\n"
+                "/id - show your Chat ID\n"
+                "/status - show tracker status"
+            )
+
+        elif text.startswith("/id"):
+            send_message(
+                chat_id,
+                f"🆔 Your Telegram Chat ID:\n{chat_id}"
+            )
+
+        elif text.startswith("/status"):
+            projects = all_projects()
+
+            send_message(
+                chat_id,
+                "📡 BSC Radar Status\n\n"
+                f"Projects tracked: {len(projects)}\n"
+                f"Scanner interval: {SCAN_INTERVAL} seconds"
+            )
 def run():
     init_db()
 
