@@ -1,6 +1,7 @@
 import os
 import time
 import requests
+import threading
 from dotenv import load_dotenv
 from db import init_db, upsert, all_projects
 
@@ -180,11 +181,27 @@ def scan():
     print("✅ Scan completed.")
 
 
+def telegram_loop():
+    while True:
+        try:
+            handle_telegram()
+            time.sleep(2)
+        except Exception as e:
+            print("⚠️ Telegram loop error:", e)
+            time.sleep(5)
+
+
 def run():
     init_db()
 
     print("🚀 BSC Pre-Launch Radar started")
     print(f"⏱ Scanner interval: {SCAN_INTERVAL} seconds")
+
+    telegram_thread = threading.Thread(
+        target=telegram_loop,
+        daemon=True
+    )
+    telegram_thread.start()
 
     while True:
         scan()
