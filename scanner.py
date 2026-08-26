@@ -180,7 +180,9 @@ def scan():
 
     print("✅ Scan completed.")
 
-
+def get_updates():
+    return telegram("getUpdates", {"timeout": 5})
+    
 def telegram_loop():
     while True:
         try:
