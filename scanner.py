@@ -235,8 +235,7 @@ else:
 
 project = {
     "address": address,
-    "name": profile.get("description") or               
-address[:10],
+    "name": profile.get("description") or address[:10],
     "description": profile.get("description") or "",
     "url": profile.get("url") or "",
     "x_url": "",
@@ -245,15 +244,15 @@ address[:10],
     "stage": stage
 }
 
-        for link in links:
-            link_type = (link.get("type") or "").lower()
-            link_url = link.get("url") or ""
+for link in links:
+    link_type = (link.get("type") or "").lower()
+    link_url = link.get("url") or ""
 
-            if link_type in ("twitter", "x"):
-                project["x_url"] = link_url
+    if link_type in ("twitter", "x"):
+        project["x_url"] = link_url
 
-            if link_type == "telegram":
-                project["telegram_url"] = link_url
+    if link_type == "telegram":
+        project["telegram_url"] = link_url
 
         try:
             upsert(project)
