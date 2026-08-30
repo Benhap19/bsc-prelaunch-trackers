@@ -197,40 +197,40 @@ def scan():
         if not address:
             continue
 
-score, stage, links = score_project(profile)
+    score, stage, links = score_project(profile)
 
-market = get_market_data(address)
+    market = get_market_data(address)
 
-# Market/activity scoring
-liquidity = market.get("liquidity", 0)
-volume_24h = market.get("volume_24h", 0)
-buys_24h = market.get("buys_24h", 0)
-sells_24h = market.get("sells_24h", 0)
+    # Market/activity scoring
+    liquidity = market.get("liquidity", 0)
+    volume_24h = market.get("volume_24h", 0)
+    buys_24h = market.get("buys_24h", 0)
+    sells_24h = market.get("sells_24h", 0)
 
-if liquidity >= 10000:
+    if liquidity >= 10000:
     score += 10
-elif liquidity >= 5000:
+    elif liquidity >= 5000:
     score += 7
-elif liquidity >= 1000:
+    elif liquidity >= 1000:
     score += 4
 
-if volume_24h >= 25000:
+    if volume_24h >= 25000:
     score += 10
-elif volume_24h >= 10000:
+    elif volume_24h >= 10000:
     score += 7
-elif volume_24h >= 1000:
+    elif volume_24h >= 1000:
     score += 4
 
-if buys_24h > sells_24h and buys_24h >= 10:
+    if buys_24h > sells_24h and buys_24h >= 10:
     score += 5
 
-score = min(score, 100)
+    score = min(score, 100)
 
-if score >= 70:
+    if score >= 70:
     stage = "🔥 HOT"
-elif score >= 45:
+    elif score >= 45:
     stage = "🟡 WATCH"
-else:
+    else:
     stage = "🔵 EARLY"
 
 project = {
