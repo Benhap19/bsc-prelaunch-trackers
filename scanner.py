@@ -4,7 +4,13 @@ import requests
 import threading
 import json
 from dotenv import load_dotenv
-from db import init_db, upsert, all_projects
+from db import (
+    init_db,
+    upsert,
+    all_projects,
+    upsert_prelaunch,
+    all_prelaunch
+)
 
 load_dotenv()
 
@@ -13,6 +19,14 @@ DEX_PAIRS_API = "https://api.dexscreener.com/latest/dex/tokens/{}"
 
 TELEGRAM_API = "https://api.telegram.org/bot{}"
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+X_BEARER_TOKEN = os.getenv("X_BEARER_TOKEN", "")
+X_API_URL = "https://api.x.com/2/tweets/search/recent"
+
+X_SEARCH_QUERIES = [
+    '(BSC OR "BNB Chain") (launch OR launching OR presale OR "fair launch") -is:retweet',
+    '(BSC OR "BNB Chain") ("contract soon" OR "CA soon" OR "contract address soon") -is:retweet',
+    '(BSC OR "BNB Chain") ("stealth launch" OR "launching soon") -is:retweet',
+]
 SCAN_INTERVAL = int(os.getenv("SCAN_INTERVAL_SECONDS", "60"))
 BSC_RPC = os.getenv(
     "BSC_RPC_URL",
@@ -352,11 +366,169 @@ def get_market_data(address):
     except Exception as e:
         print("⚠️ Market data error:", e)
         return {}
+        
+def search_x_prelaunch():
+    if not X_BEARER_TOKEN:
+        print("⚠️ X_BEARER_TOKEN is not configured.")
+        return
 
+    headers = {
+        "Authorization": f"Bearer {X_BEARER_TOKEN}"
+    }
+
+    for query in X_SEARCH_QUERIES:
+        try:
+            response = requests.get(
+                X_API_URL,
+                headers=headers,
+                params={
+                    "query": query,
+                    "max_results": 10,
+                    "tweet.fields": "created_at,entities,author_id"
+                },
+                timeout=20
+            )
+
+            if response.status_code != 200:
+                print(
+                    "⚠️ X API error:",
+                    response.status_code,
+                    response.text[:300]
+                )
+                continue
+
+            data = response.json()
+
+            for tweet in data.get("data", []):
+                process_x_post(tweet)
+
+        except Exception as e:
+            print("⚠️ X search error:", e)
+
+
+def process_x_post(tweet):
+    text = tweet.get("text", "").strip()
+
+    if not text:
+        return
+
+    lower = text.lower()
+
+    bsc_keywords = [
+        "bsc",
+        "bnb chain",
+        "binance smart chain"
+    ]
+
+    launch_keywords = [
+        "launch",
+        "launching",
+        "presale",
+        "fair launch",
+        "stealth launch",
+        "contract soon",
+        "ca soon"
+    ]
+
+    bsc_match = any(x in lower for x in bsc_keywords)
+    launch_match = any(x in lower for x in launch_keywords)
+
+    if not bsc_match or not launch_match:
+        return
+
+    symbol = ""
+
+    # Find $TOKEN symbols
+    words = text.replace("\n", " ").split()
+
+    for word in words:
+        clean = word.strip(".,!?()[]{}:;\"'")
+
+        if clean.startswith("$") and len(clean) >= 2:
+            symbol = clean[:20]
+            break
+
+    # Find project name from hashtags if available
+    name = ""
+
+    entities = tweet.get("entities") or {}
+    hashtags = entities.get("hashtags") or []
+
+    if hashtags:
+        tag = hashtags[0].get("tag", "")
+        if tag:
+            name = tag
+
+    if not name:
+        name = "Unknown BSC Project"
+
+    # Calculate pre-launch score
+    score = 0
+
+    if "bsc" in lower or "bnb chain" in lower:
+        score += 25
+
+    if "launch" in lower or "launching" in lower:
+        score += 20
+
+    if "presale" in lower:
+        score += 15
+
+    if "fair launch" in lower:
+        score += 15
+
+    if "contract soon" in lower or "ca soon" in lower:
+        score += 20
+
+    if symbol:
+        score += 10
+
+    score = min(score, 100)
+
+    source = "X"
+
+    project = {
+        "name": name,
+        "symbol": symbol,
+        "description": text[:500],
+        "website": "",
+        "x_url": "",
+        "telegram_url": "",
+        "launch_date": "",
+        "bsc_intent": 1,
+        "prelaunch_score": score,
+        "stage": "EARLY",
+        "source": source,
+        "mentions": 1,
+        "contract_address": "",
+        "deployer": ""
+    }
+
+    if score >= 70:
+        project["stage"] = "HOT"
+    elif score >= 45:
+        project["stage"] = "WATCH"
+
+    try:
+        upsert_prelaunch(project)
+
+        print(
+            f"🔎 X PRE-LAUNCH: "
+            f"{name} {symbol} "
+            f"Score={score} "
+            f"Stage={project['stage']}"
+        )
+
+    except Exception as e:
+        print("⚠️ X database error:", e)
+        
 def scan():
     global last_scanned_block
 
     print("🔎 Scanning BSC blockchain...")
+
+    # Check X for projects before contract deployment
+    search_x_prelaunch()
 
     latest_block = get_latest_block()
 
