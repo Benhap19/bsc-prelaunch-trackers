@@ -2,6 +2,7 @@ import os
 import time
 import requests
 import threading
+import json
 from dotenv import load_dotenv
 from db import init_db, upsert, all_projects
 
@@ -12,10 +13,209 @@ DEX_PAIRS_API = "https://api.dexscreener.com/latest/dex/tokens/{}"
 
 TELEGRAM_API = "https://api.telegram.org/bot{}"
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-SCAN_INTERVAL = int(os.getenv("SCAN_INTERVAL_SECONDS", "300"))
+SCAN_INTERVAL = int(os.getenv("SCAN_INTERVAL_SECONDS", "60"))
+BSC_RPC = os.getenv(
+    "BSC_RPC_URL",
+    "https://bsc-dataseed.bnbchain.org"
+)
 
+last_scanned_block = None
+seen_contracts = set()
 known_alerts = set()
 
+def rpc_call(method, params=None):
+    try:
+        payload = {
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params or [],
+            "id": 1
+        }
+
+        response = requests.post(
+            BSC_RPC,
+            json=payload,
+            timeout=20
+        )
+
+        response.raise_for_status()
+        data = response.json()
+
+        if "error" in data:
+            print("⚠️ BSC RPC error:", data["error"])
+            return None
+
+        return data.get("result")
+
+    except Exception as e:
+        print("⚠️ BSC RPC request error:", e)
+        return None
+
+
+def get_latest_block():
+    result = rpc_call("eth_blockNumber")
+
+    if not result:
+        return None
+
+    return int(result, 16)
+
+
+def get_block(block_number):
+    return rpc_call(
+        "eth_getBlockByNumber",
+        [hex(block_number), True]
+    )
+
+
+def get_contract_address(tx_hash):
+    receipt = rpc_call(
+        "eth_getTransactionReceipt",
+        [tx_hash]
+    )
+
+    if not receipt:
+        return None
+
+    return receipt.get("contractAddress")
+
+
+def eth_call(to, data):
+    return rpc_call(
+        "eth_call",
+        [
+            {
+                "to": to,
+                "data": data
+            },
+            "latest"
+        ]
+    )
+
+
+def read_token_string(address, selector):
+    result = eth_call(address, selector)
+
+    if not result or result == "0x":
+        return ""
+
+    try:
+        raw = bytes.fromhex(result[2:])
+
+        # Standard ABI dynamic string
+        if len(raw) >= 64:
+            offset = int.from_bytes(raw[:32], "big")
+
+            if offset + 32 <= len(raw):
+                length = int.from_bytes(
+                    raw[offset:offset + 32],
+                    "big"
+                )
+
+                start = offset + 32
+                end = start + length
+
+                if end <= len(raw):
+                    return raw[start:end].decode(
+                        "utf-8",
+                        errors="ignore"
+                    ).strip()
+
+        # bytes32 fallback
+        return raw.rstrip(b"\x00").decode(
+            "utf-8",
+            errors="ignore"
+        ).strip()
+
+    except Exception:
+        return ""
+
+
+def is_bep20_token(address):
+    try:
+        name = read_token_string(
+            address,
+            "0x06fdde03"
+        )
+
+        symbol = read_token_string(
+            address,
+            "0x95d89b41"
+        )
+
+        decimals = eth_call(
+            address,
+            "0x313ce567"
+        )
+
+        total_supply = eth_call(
+            address,
+            "0x18160ddd"
+        )
+
+        if not symbol:
+            return None
+
+        if not decimals:
+            return None
+
+        if not total_supply:
+            return None
+
+        return {
+            "name": name or "Unknown Token",
+            "symbol": symbol,
+            "decimals": int(decimals, 16),
+            "total_supply": int(total_supply, 16)
+        }
+
+    except Exception:
+        return None
+
+
+def discover_new_contracts(block_number):
+    block = get_block(block_number)
+
+    if not block:
+        return []
+
+    contracts = []
+
+    for tx in block.get("transactions", []):
+        # Contract deployment transaction
+        if tx.get("to") is not None:
+            continue
+
+        tx_hash = tx.get("hash")
+        deployer = tx.get("from")
+
+        if not tx_hash:
+            continue
+
+        contract = get_contract_address(tx_hash)
+
+        if not contract:
+            continue
+
+        if contract.lower() in seen_contracts:
+            continue
+
+        seen_contracts.add(contract.lower())
+
+        token = is_bep20_token(contract)
+
+        if not token:
+            continue
+
+        contracts.append({
+            "address": contract,
+            "deployer": deployer,
+            "tx_hash": tx_hash,
+            "block": block_number,
+            "token": token
+        })
+
+    return contracts
 
 def telegram(method, data=None):
     if not BOT_TOKEN:
@@ -152,136 +352,107 @@ def get_market_data(address):
     except Exception as e:
         print("⚠️ Market data error:", e)
         return {}
-def scan():
-    print("🔎 Scanning BSC projects...")
 
-    try:
-        response = requests.get(
-            DEX_API,
-            timeout=20,
-            headers={
-                "User-Agent": "BSC-PreLaunch-Radar/1.0"
-            }
+def scan():
+    global last_scanned_block
+
+    print("🔎 Scanning BSC blockchain...")
+
+    latest_block = get_latest_block()
+
+    if latest_block is None:
+        print("⚠️ Could not get latest BSC block.")
+        return
+
+    # First scan: start close to the current chain tip.
+    if last_scanned_block is None:
+        last_scanned_block = max(0, latest_block - 20)
+
+    start_block = last_scanned_block + 1
+
+    # Protect the RPC from an excessively large catch-up scan.
+    max_blocks = 100
+
+    if latest_block - start_block + 1 > max_blocks:
+        start_block = latest_block - max_blocks + 1
+
+    print(
+        f"📦 Checking BSC blocks "
+        f"{start_block} → {latest_block}"
+    )
+
+    total_tokens = 0
+
+    for block_number in range(start_block, latest_block + 1):
+
+        contracts = discover_new_contracts(block_number)
+
+        if not contracts:
+            continue
+
+        print(
+            f"🆕 Block {block_number}: "
+            f"{len(contracts)} token contract(s) found"
         )
 
-        print("DexScreener status:", response.status_code)
+        for item in contracts:
 
-        if response.status_code == 429:
-            print("⚠️ DexScreener rate limit reached.")
-            print("Waiting until next scan...")
-            return
+            address = item["address"]
+            deployer = item["deployer"]
+            tx_hash = item["tx_hash"]
+            token = item["token"]
 
-        response.raise_for_status()
+            project = {
+                "address": address,
+                "name": token.get("name") or "Unknown Token",
+                "description": (
+                    f"New BSC token detected before "
+                    f"market discovery. "
+                    f"Deployer: {deployer}"
+                ),
+                "url": "",
+                "x_url": "",
+                "telegram_url": "",
+                "score": 50,
+                "stage": "🟢 PRE-LAUNCH",
+            }
 
-        profiles = response.json()
+            try:
+                upsert(project)
+                total_tokens += 1
 
-        if not isinstance(profiles, list):
-            print("⚠️ Unexpected API response.")
-            return
+            except Exception as e:
+                print("⚠️ Database error:", e)
+                continue
 
-    except requests.RequestException as e:
-        print("⚠️ DexScreener API error:", e)
-        return
+            if address.lower() not in known_alerts:
 
-    except Exception as e:
-        print("⚠️ Scanner error:", e)
-        return
+                known_alerts.add(address.lower())
 
-    for profile in profiles:
+                chat_id = os.getenv("TELEGRAM_CHAT_ID")
 
-        if profile.get("chainId", "").lower() != "bsc":
-            continue
+                if chat_id:
 
-        address = profile.get("tokenAddress")
+                    message = (
+                        "🚨 NEW BSC TOKEN DETECTED\n\n"
+                        f"🪙 Name: {project['name']}\n"
+                        f"🔤 Symbol: {token.get('symbol', 'Unknown')}\n"
+                        f"📍 Stage: PRE-LAUNCH\n"
+                        f"📊 Score: {project['score']}/100\n\n"
+                        f"📄 Contract:\n{address}\n\n"
+                        f"👤 Deployer:\n{deployer}\n\n"
+                        f"🔗 TX:\n"
+                        f"https://bscscan.com/tx/{tx_hash}"
+                    )
 
-        if not address:
-            continue
+                    send_message(chat_id, message)
 
-    score, stage, links = score_project(profile)
+    last_scanned_block = latest_block
 
-    market = get_market_data(address)
-
-    # Market/activity scoring
-    liquidity = market.get("liquidity", 0)
-    volume_24h = market.get("volume_24h", 0)
-    buys_24h = market.get("buys_24h", 0)
-    sells_24h = market.get("sells_24h", 0)
-
-    if liquidity >= 10000:
-    score += 10
-    elif liquidity >= 5000:
-    score += 7
-    elif liquidity >= 1000:
-    score += 4
-
-    if volume_24h >= 25000:
-    score += 10
-    elif volume_24h >= 10000:
-    score += 7
-    elif volume_24h >= 1000:
-    score += 4
-
-    if buys_24h > sells_24h and buys_24h >= 10:
-    score += 5
-
-    score = min(score, 100)
-
-    if score >= 70:
-    stage = "🔥 HOT"
-    elif score >= 45:
-    stage = "🟡 WATCH"
-    else:
-    stage = "🔵 EARLY"
-
-project = {
-    "address": address,
-    "name": profile.get("description") or address[:10],
-    "description": profile.get("description") or "",
-    "url": profile.get("url") or "",
-    "x_url": "",
-    "telegram_url": "",
-    "score": score,
-    "stage": stage
-}
-
-for link in links:
-    link_type = (link.get("type") or "").lower()
-    link_url = link.get("url") or ""
-
-    if link_type in ("twitter", "x"):
-        project["x_url"] = link_url
-
-    if link_type == "telegram":
-        project["telegram_url"] = link_url
-
-        try:
-            upsert(project)
-        except Exception as e:
-            print("⚠️ Database error:", e)
-            continue
-
-        if score >= 60 and address not in known_alerts:
-
-            known_alerts.add(address)
-
-            chat_id = os.getenv("TELEGRAM_CHAT_ID")
-
-            if chat_id:
-
-                message = (
-                    "🚨 NEW BSC PROJECT DETECTED!\n\n"
-                    f"Project: {project['name']}\n"
-                    f"Stage: {stage}\n"
-                    f"Score: {score}/100\n"
-                    f"Contract: {address}\n"
-                    f"Website: {project['url'] or 'Not available'}\n"
-                    f"X: {project['x_url'] or 'Not available'}\n"
-                    f"Telegram: {project['telegram_url'] or 'Not available'}"
-                )
-
-                send_message(chat_id, message)
-
-    print("✅ Scan completed.")
+    print(
+        f"✅ BSC scan completed. "
+        f"New tokens found: {total_tokens}"
+    )                
 
 def get_updates():
     return telegram("getUpdates", {"timeout": 5})
