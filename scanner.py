@@ -50,6 +50,7 @@ def send_message(chat_id, text):
     )
 
 
+
 def score_project(profile):
     score = 0
     links = profile.get("links") or []
@@ -61,19 +62,36 @@ def score_project(profile):
 
     description = profile.get("description") or ""
 
+    # Project description
     if description:
         score += 10
 
+    # Website
     if "website" in link_types or "web" in link_types:
-        score += 10
+        score += 15
 
+    # X / Twitter
     if "twitter" in link_types or "x" in link_types:
         score += 15
 
+    # Telegram
     if "telegram" in link_types:
         score += 15
 
-    if score >= 60:
+    # Discord
+    if "discord" in link_types:
+        score += 10
+
+    # GitHub
+    if "github" in link_types:
+        score += 10
+
+    # Other community/social links
+    if "medium" in link_types:
+        score += 5
+
+    # Determine project stage
+    if score >= 70:
         stage = "🔥 HOT"
     elif score >= 45:
         stage = "🟡 WATCH"
@@ -81,7 +99,6 @@ def score_project(profile):
         stage = "🔵 EARLY"
 
     return min(score, 100), stage, links
-
 
 def scan():
     print("🔎 Scanning BSC projects...")
