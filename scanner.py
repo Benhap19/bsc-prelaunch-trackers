@@ -197,7 +197,7 @@ def scan():
         if not address:
             continue
 
-     score, stage, links = score_project(profile)
+score, stage, links = score_project(profile)
 
 market = get_market_data(address)
 
@@ -234,17 +234,16 @@ else:
     stage = "🔵 EARLY"
 
 project = {
-
-        project = {
-            "address": address,
-            "name": profile.get("description") or address[:10],
-            "description": profile.get("description") or "",
-            "url": profile.get("url") or "",
-            "x_url": "",
-            "telegram_url": "",
-            "score": score,
-            "stage": stage
-        }
+    "address": address,
+    "name": profile.get("description") or               
+address[:10],
+    "description": profile.get("description") or "",
+    "url": profile.get("url") or "",
+    "x_url": "",
+    "telegram_url": "",
+    "score": score,
+    "stage": stage
+}
 
         for link in links:
             link_type = (link.get("type") or "").lower()
