@@ -3,6 +3,7 @@ import time
 import requests
 import threading
 import json
+import re
 from dotenv import load_dotenv
 from db import (
     init_db,
@@ -21,6 +22,7 @@ TELEGRAM_API = "https://api.telegram.org/bot{}"
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 X_BEARER_TOKEN = os.getenv("X_BEARER_TOKEN", "")
 X_API_URL = "https://api.x.com/2/tweets/search/recent"
+TELEGRAM_SOURCE_CHATS = os.getenv("TELEGRAM_SOURCE_CHATS", "")
 
 X_SEARCH_QUERIES = [
     '(BSC OR "BNB Chain") (launch OR launching OR presale OR "fair launch") -is:retweet',
@@ -637,7 +639,177 @@ def telegram_loop():
         except Exception as e:
             print("⚠️ Telegram loop error:", e)
             time.sleep(5)
+def process_telegram_prelaunch(message):
+    chat = message.get("chat", {})
+    text = message.get("text", "") or message.get("caption", "")
 
+    if not text:
+        return
+
+    chat_id = str(chat.get("id", ""))
+    chat_username = chat.get("username", "")
+    chat_title = chat.get("title", "Telegram")
+
+    # Only monitor configured Telegram sources
+    allowed_sources = [
+        x.strip().lower()
+        for x in TELEGRAM_SOURCE_CHATS.split(",")
+        if x.strip()
+    ]
+
+    if allowed_sources:
+        identifiers = {
+            chat_id.lower(),
+            f"@{chat_username}".lower() if chat_username else "",
+            chat_username.lower() if chat_username else ""
+        }
+
+        if not identifiers.intersection(allowed_sources):
+            return
+
+    lower = text.lower()
+
+    score = 0
+
+    # BSC / BNB indicators
+    if "bsc" in lower or "bnb chain" in lower or "binance smart chain" in lower:
+        score += 25
+
+    # Launch indicators
+    if "launch" in lower or "launching" in lower:
+        score += 20
+
+    if "presale" in lower:
+        score += 15
+
+    if "fair launch" in lower or "fairlaunch" in lower:
+        score += 15
+
+    if "contract soon" in lower or "ca soon" in lower:
+        score += 25
+
+    if "contract address" in lower or "contract:" in lower:
+        score += 20
+
+    if "stealth launch" in lower:
+        score += 25
+
+    if "launching soon" in lower:
+        score += 20
+
+    if "liquidity" in lower:
+        score += 5
+
+    # Extract possible ticker
+    symbol = ""
+
+    symbol_match = re.search(
+        r'[\$#]([A-Z][A-Z0-9]{1,10})\b',
+        text
+    )
+
+    if symbol_match:
+        symbol = symbol_match.group(1)
+        score += 10
+
+    # Website / social links
+    has_website = (
+        "http://" in lower or
+        "https://" in lower or
+        "www." in lower
+    )
+
+    if has_website:
+        score += 10
+
+    # Ignore weak/general Telegram messages
+    score = min(score, 100)
+
+    if score < 45:
+        return
+
+    # Try to identify project name
+    name = ""
+
+    lines = [
+        line.strip()
+        for line in text.splitlines()
+        if line.strip()
+    ]
+
+    if lines:
+        name = lines[0][:80]
+
+    if not name:
+        name = "Unknown BSC Pre-Launch"
+
+    # Avoid using an empty symbol because the database uses symbol as a unique key
+    if not symbol:
+        msg_id = message.get("message_id", "0")
+        symbol = f"TG{chat_id[-6:]}{msg_id}"
+
+    message_id = message.get("message_id", "")
+
+    project = {
+        "name": name,
+        "symbol": symbol,
+        "description": text[:1000],
+        "website": "",
+        "x_url": "",
+        "telegram_url": (
+            f"https://t.me/{chat_username}"
+            if chat_username else ""
+        ),
+        "launch_date": "",
+        "bsc_intent": 1,
+        "prelaunch_score": score,
+        "stage": "EARLY",
+        "source": "Telegram",
+        "mentions": 1,
+        "contract_address": "",
+        "deployer": ""
+    }
+
+    if score >= 70:
+        project["stage"] = "HOT"
+    elif score >= 45:
+        project["stage"] = "WATCH"
+
+    try:
+        upsert_prelaunch(project)
+
+        print(
+            f"📡 TELEGRAM PRE-LAUNCH: "
+            f"{name} ${symbol} "
+            f"Score={score} "
+            f"Stage={project['stage']} "
+            f"Source={chat_title}"
+        )
+
+    except Exception as e:
+        print("⚠️ Telegram database error:", e)
+
+    # Alert only strong signals
+    alert_key = f"tg:{chat_id}:{message_id}"
+
+    if score >= 60 and alert_key not in known_alerts:
+        known_alerts.add(alert_key)
+
+        chat_target = os.getenv("TELEGRAM_CHAT_ID")
+
+        if chat_target:
+            alert = (
+                "🚨 BSC PRE-LAUNCH SIGNAL\n\n"
+                f"🪙 Project: {name}\n"
+                f"🔤 Symbol: ${symbol}\n"
+                f"🔥 Score: {score}/100\n"
+                f"📡 Stage: {project['stage']}\n"
+                f"📢 Source: {chat_title}\n\n"
+                f"💬 {text[:700]}\n\n"
+                f"🔗 Telegram: {project['telegram_url']}"
+            )
+
+            send_message(chat_target, alert)
 def handle_telegram():
     result = get_updates()
 
@@ -648,7 +820,8 @@ def handle_telegram():
         message = update.get("message")
 
         if not message:
-            continue
+            continue 
+           process_telegram_prelaunch(message)
 
         chat = message.get("chat", {})
         chat_id = chat.get("id")
