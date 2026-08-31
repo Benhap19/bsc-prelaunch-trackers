@@ -821,7 +821,7 @@ def handle_telegram():
 
         if not message:
             continue 
-           process_telegram_prelaunch(message)
+        process_telegram_prelaunch(message)
 
         chat = message.get("chat", {})
         chat_id = chat.get("id")
