@@ -529,9 +529,8 @@ def scan():
 
     print("🔎 Scanning BSC blockchain...")
 
-    # Check X for projects before contract deployment
-    search_x_prelaunch()
-    # Temporarily disabled until X API credits are available.
+    # X API temporarily disabled until credits are available
+    # search_x_prelaunch()
 
     latest_block = get_latest_block()
 
