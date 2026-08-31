@@ -628,9 +628,32 @@ def scan():
         f"New tokens found: {total_tokens}"
     )                
 
+telegram_offset = 0
+
+
 def get_updates():
-    return telegram("getUpdates", {"timeout": 5})
-    
+    global telegram_offset
+
+    result = telegram(
+        "getUpdates",
+        {
+            "timeout": 5,
+            "offset": telegram_offset
+        }
+    )
+
+    if result and result.get("ok"):
+        updates = result.get("result", [])
+
+        if updates:
+            telegram_offset = updates[-1]["update_id"] + 1
+
+        return {
+            "ok": True,
+            "result": updates
+        }
+
+    return result  
 def telegram_loop():
     while True:
         try:
