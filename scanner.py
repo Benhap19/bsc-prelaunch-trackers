@@ -810,7 +810,7 @@ def process_telegram_prelaunch(message):
                 f"🔗 Telegram: {project['telegram_url']}"
             )
 
-            send_message(chat_target, alert)
+
 def handle_telegram():
     result = get_updates()
 
