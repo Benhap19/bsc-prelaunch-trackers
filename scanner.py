@@ -39,7 +39,7 @@ last_scanned_block = None
 seen_contracts = set()
 known_alerts = set()
 
-def rpc_call(method, params=None):
+def rpc_call(method, params=None, silent=False):
     try:
         payload = {
             "jsonrpc": "2.0",
@@ -58,13 +58,15 @@ def rpc_call(method, params=None):
         data = response.json()
 
         if "error" in data:
-            print("⚠️ BSC RPC error:", data["error"])
+            if not silent:
+                print("⚠️ BSC RPC error:", data["error"])
             return None
 
         return data.get("result")
 
     except Exception as e:
-        print("⚠️ BSC RPC request error:", e)
+        if not silent:
+            print("⚠️ BSC RPC request error:", e)
         return None
 
 
@@ -74,7 +76,10 @@ def get_latest_block():
     if not result:
         return None
 
-    return int(result, 16)
+    try:
+        return int(result, 16)
+    except Exception:
+        return None
 
 
 def get_block(block_number):
@@ -105,7 +110,8 @@ def eth_call(to, data):
                 "data": data
             },
             "latest"
-        ]
+        ],
+        silent=True
     )
 
 
