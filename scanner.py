@@ -531,6 +531,7 @@ def scan():
 
     # Check X for projects before contract deployment
     search_x_prelaunch()
+    # Temporarily disabled until X API credits are available.
 
     latest_block = get_latest_block()
 
