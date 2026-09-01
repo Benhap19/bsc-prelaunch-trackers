@@ -644,8 +644,8 @@ def scan():
                 "url": "",
                 "x_url": "",
                 "telegram_url": "",
-                "score": 50,
-                "stage": "🟢 PRE-LAUNCH",
+                "score": score,
+                "stage": rating,
             }
 
             try:
