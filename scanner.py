@@ -773,21 +773,18 @@ def scan():
                 print("⚠️ Database error:", e)
                 continue
 
-            if address.lower() not in known_alerts:
+                    if address.lower() not in known_alerts:
+                       known_alerts.add(address.lower())
 
-                known_alerts.add(address.lower())
+                      chat_id = os.getenv("TELEGRAM_CHAT_ID")
 
-                chat_id = os.getenv("TELEGRAM_CHAT_ID")
-
-                if chat_id:
-
-                    message = (
+            if chat_id:
+                message = (
                     "🚨 NEW BSC TOKEN DETECTED\n\n"
                     f"🪙 Name: {project['name']}\n"
                     f"🔤 Symbol: {token.get('symbol', 'Unknown')}\n"
-                    f"📍 Stage: {project['stage']}\n"
+                    f"🚩 Stage: {project['stage']}\n"
                     f"📊 Score: {project['score']}/100\n\n"
-
                     "🛡️ SECURITY CHECK\n"
                     f"⚠️ Risk: {security.get('risk', 'UNKNOWN')}\n"
                     f"🔐 Ownership Renounced: "
@@ -798,23 +795,22 @@ def scan():
                     f"{'YES ⚠️' if security.get('has_pause') else 'NO ✅'}\n"
                     f"🪙 Mint Function: "
                     f"{'YES ⚠️' if security.get('has_mint') else 'NO ✅'}\n\n"
-
                     f"📄 Contract:\n{address}\n\n"
                     f"👤 Deployer:\n{deployer}\n\n"
                     f"🔗 TX:\n"
                     f"https://bscscan.com/tx/{tx_hash}"
-                    )
+                )
 
-                   send_message(chat_id, message)
+                send_message(chat_id, message)
 
-                   last_scanned_block = latest_block
+        last_scanned_block = latest_block
 
-                   print(
-                     f"✅ BSC scan completed. "
-                     f"New tokens found: {total_tokens}"
-                 )                
+        print(
+            "✅ BSC scan completed. "
+            f"New tokens found: {total_tokens}"
+        )
 
-                   telegram_offset = 0
+    telegram_offset = 0
 
 
 def get_updates():
