@@ -631,6 +631,8 @@ def scan():
             tx_hash = item["tx_hash"]
             token = item["token"]
 
+            score, rating = calculate_token_score(address, token)
+
             project = {
                 "address": address,
                 "name": token.get("name") or "Unknown Token",
