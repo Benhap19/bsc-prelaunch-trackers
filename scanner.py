@@ -805,7 +805,7 @@ def scan():
                     f"https://bscscan.com/tx/{tx_hash}"
                     )
 
-                    send_message(chat_id, message)
+                   send_message(chat_id, message)
 
                    last_scanned_block = latest_block
 
