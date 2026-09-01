@@ -194,6 +194,55 @@ def is_bep20_token(address):
     except Exception:
         return None
 
+def calculate_token_score(address, token):
+    score = 50
+
+    # Basic token information
+    if token.get("name"):
+        score += 5
+
+    if token.get("symbol"):
+        score += 5
+
+    # Decimal check
+    if token.get("decimals") is not None:
+        decimals = token.get("decimals")
+        if 6 <= decimals <= 18:
+            score += 5
+
+    # Supply check
+    if token.get("total_supply"):
+        supply = token.get("total_supply")
+        if supply > 0:
+            score += 5
+
+    # Check whether contract has bytecode
+    try:
+        code = rpc_call(
+            "eth_getCode",
+            [address, "latest"],
+            silent=True
+        )
+
+        if code and code != "0x":
+            score += 10
+
+    except Exception:
+        pass
+
+    # Cap score
+    score = max(0, min(score, 100))
+
+    if score >= 80:
+        rating = "🟢 HIGH POTENTIAL"
+    elif score >= 60:
+        rating = "🟡 WATCH"
+    elif score >= 40:
+        rating = "🟠 RISKY"
+    else:
+        rating = "🔴 HIGH RISK"
+
+    return score, rating
 
 def discover_new_contracts(block_number):
     block = get_block(block_number)
