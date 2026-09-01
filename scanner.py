@@ -668,7 +668,7 @@ def scan():
                         "🚨 NEW BSC TOKEN DETECTED\n\n"
                         f"🪙 Name: {project['name']}\n"
                         f"🔤 Symbol: {token.get('symbol', 'Unknown')}\n"
-                        f"📍 Stage: f"📍 Stage: {project['stage']}\n"
+                        f"📍 Stage: {project['stage']}\n"
                         f"📊 Score: {project['score']}/100\n\n"
                         f"📄 Contract:\n{address}\n\n"
                         f"👤 Deployer:\n{deployer}\n\n"
