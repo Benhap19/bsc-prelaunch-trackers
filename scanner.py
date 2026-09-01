@@ -810,9 +810,9 @@ def scan():
                    last_scanned_block = latest_block
 
                    print(
-                   f"✅ BSC scan completed. "
-                   f"New tokens found: {total_tokens}"
-                   )                
+                     f"✅ BSC scan completed. "
+                     f"New tokens found: {total_tokens}"
+                 )                
 
                    telegram_offset = 0
 
