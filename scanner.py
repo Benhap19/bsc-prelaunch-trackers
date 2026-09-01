@@ -244,6 +244,117 @@ def calculate_token_score(address, token):
 
     return score, rating
 
+def analyze_contract_security(address):
+    """
+    Basic BSC contract security checks.
+    Returns useful risk indicators without stopping the scanner.
+    """
+
+    security = {
+        "owner": "",
+        "ownership_renounced": False,
+        "has_bytecode": False,
+        "has_blacklist": False,
+        "has_pause": False,
+        "has_mint": False,
+        "risk": "UNKNOWN"
+    }
+
+    try:
+        # Check contract bytecode
+        code = rpc_call(
+            "eth_getCode",
+            [address, "latest"],
+            silent=True
+        )
+
+        if code and code != "0x":
+            security["has_bytecode"] = True
+
+        # Standard Ownable owner() selector
+        owner_result = eth_call(
+            address,
+            "0x8da5cb5b"
+        )
+
+        if owner_result and owner_result != "0x":
+            try:
+                owner = "0x" + owner_result[-40:]
+                security["owner"] = owner
+
+                if int(owner, 16) == 0:
+                    security["ownership_renounced"] = True
+
+            except Exception:
+                pass
+
+        # Look for common function selectors in bytecode
+        if code and code != "0x":
+            code_lower = code.lower()
+
+            # Common blacklist / bot protection selectors
+            blacklist_selectors = [
+                "443e5e0d",
+                "5c60da1b",
+                "f9f92be4"
+            ]
+
+            # Common pause selector
+            pause_selectors = [
+                "8456cb59"
+            ]
+
+            # Common mint-related selectors
+            mint_selectors = [
+                "40c10f19",
+                "a0712d68"
+            ]
+
+            security["has_blacklist"] = any(
+                selector in code_lower
+                for selector in blacklist_selectors
+            )
+
+            security["has_pause"] = any(
+                selector in code_lower
+                for selector in pause_selectors
+            )
+
+            security["has_mint"] = any(
+                selector in code_lower
+                for selector in mint_selectors
+            )
+
+        # Basic risk classification
+        risk_points = 0
+
+        if not security["has_bytecode"]:
+            risk_points += 10
+
+        if security["has_blacklist"]:
+            risk_points += 15
+
+        if security["has_pause"]:
+            risk_points += 10
+
+        if security["has_mint"]:
+            risk_points += 15
+
+        if security["ownership_renounced"]:
+            risk_points -= 15
+
+        if risk_points <= 0:
+            security["risk"] = "LOW"
+        elif risk_points <= 20:
+            security["risk"] = "MEDIUM"
+        else:
+            security["risk"] = "HIGH"
+
+    except Exception:
+        security["risk"] = "UNKNOWN"
+
+    return security
+
 def discover_new_contracts(block_number):
     block = get_block(block_number)
 
