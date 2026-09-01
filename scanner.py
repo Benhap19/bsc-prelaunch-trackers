@@ -743,6 +743,7 @@ def scan():
             token = item["token"]
 
             score, rating = calculate_token_score(address, token)
+            security = analyze_contract_security(address)
 
             project = {
                 "address": address,
