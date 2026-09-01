@@ -758,6 +758,11 @@ def scan():
                 "telegram_url": "",
                 "score": score,
                 "stage": rating,
+                "security_risk": security.get("risk", "UNKNOWN"),
+                "ownership_renounced": security.get("ownership_renounced", False),
+                "has_blacklist": security.get("has_blacklist", False),
+                "has_pause": security.get("has_pause", False),
+                "has_mint": security.get("has_mint", False),
             }
 
             try:
