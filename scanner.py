@@ -604,3 +604,103 @@ def html_to_text(html: str) -> str:
     return re.sub(
         r"\s+",
         " ",
+        
+               html,
+           ).strip()
+
+# ============================================================
+# SCAN CYCLE
+# ============================================================
+
+def scan_once() -> Dict[str, int]:
+    """
+    Run one complete pre-CA discovery cycle.
+    """
+
+    stats = {
+        "x": 0,
+        "rss": 0,
+        "websites": 0,
+    }
+
+    log.info("Starting BSC Radar V3 scan cycle")
+
+    # --------------------------------------------------------
+    # X / TWITTER
+    # --------------------------------------------------------
+    try:
+        stats["x"] = search_x()
+    except Exception:
+        log.exception("X discovery failed")
+
+    # --------------------------------------------------------
+    # RSS / PUBLIC FEEDS
+    # --------------------------------------------------------
+    try:
+        stats["rss"] = search_rss_feeds()
+    except Exception:
+        log.exception("RSS discovery failed")
+
+    log.info(
+        "Scan cycle complete | X=%s RSS=%s Websites=%s",
+        stats["x"],
+        stats["rss"],
+        stats["websites"],
+    )
+
+    return stats
+
+
+# ============================================================
+# MAIN LOOP
+# ============================================================
+
+def run() -> None:
+    """
+    Continuously run the pre-CA intelligence scanner.
+    """
+
+    log.info("==============================================")
+    log.info("BSC RADAR V3 STARTING")
+    log.info("Pre-CA intelligence mode enabled")
+    log.info("==============================================")
+
+    while not stop_event.is_set():
+        try:
+            scan_once()
+
+        except Exception:
+            log.exception("Unexpected error in scan cycle")
+
+        interval = max(
+            30,
+            int(getattr(config, "SCAN_INTERVAL", 120))
+        )
+
+        log.info(
+            "Next scan in %s seconds",
+            interval
+        )
+
+        stop_event.wait(interval)
+
+    log.info("BSC Radar V3 stopped")
+
+
+def main() -> None:
+    """
+    Application entry point.
+    """
+    try:
+        run()
+    except KeyboardInterrupt:
+        log.info("Shutdown requested")
+    finally:
+        stop_event.set()
+
+
+if __name__ == "__main__":
+    main()
+
+
+        
