@@ -674,7 +674,7 @@ def run() -> None:
 
         interval = max(
             30,
-            int(getattr(config, "SCAN_INTERVAL", 120))
+            int(getattr(config, "SCAN_INTERVAL", 60))
         )
 
         log.info(
