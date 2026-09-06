@@ -1,4 +1,3 @@
-
 """
 BSC RADAR V3 - CONFIGURATION
 ============================
@@ -167,11 +166,28 @@ RSS_ENABLED = (
     in ("1", "true", "yes", "on")
 )
 
+DEFAULT_RSS_FEEDS = [
+    "https://news.google.com/rss/search?q=BSC+crypto+launch+when%3A1d&hl=en-US&gl=US&ceid=US%3Aen",
+    "https://news.google.com/rss/search?q=%22BNB+Chain%22+token+launch+when%3A1d&hl=en-US&gl=US&ceid=US%3Aen",
+    "https://news.google.com/rss/search?q=crypto+presale+BSC+when%3A1d&hl=en-US&gl=US&ceid=US%3Aen",
+    "https://news.google.com/rss/search?q=%22fair+launch%22+crypto+BSC+when%3A1d&hl=en-US&gl=US&ceid=US%3Aen",
+    "https://cointelegraph.com/rss",
+]
+
 RSS_FEEDS = [
     item.strip()
     for item in os.getenv(
         "RSS_FEEDS",
-        ""
+        ",".join(DEFAULT_RSS_FEEDS),
+    ).split(",")
+    if item.strip()
+]
+
+WEBSITE_SEEDS = [
+    item.strip()
+    for item in os.getenv(
+        "WEBSITE_SEEDS",
+        "",
     ).split(",")
     if item.strip()
 ]
@@ -306,6 +322,8 @@ def print_config():
         f"Website discovery: "
         f"{WEBSITE_DISCOVERY_ENABLED}"
     )
+    print(f"RSS feeds: {len(RSS_FEEDS)}")
+    print(f"Website seeds: {len(WEBSITE_SEEDS)}")
 
     print(
         f"Pre-CA minimum score: "
