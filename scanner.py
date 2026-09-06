@@ -343,6 +343,10 @@ def search_rss_feeds() -> int:
         return 0
 
     processed = 0
+    feeds_ok = 0
+    feeds_failed = 0
+    articles = 0
+    candidates = 0
 
     for feed_url in config.RSS_FEEDS:
         response = http_get(
@@ -351,8 +355,11 @@ def search_rss_feeds() -> int:
             timeout=20,
         )
         if response is None or response.status_code != 200:
+            feeds_failed += 1
             log.warning("RSS unavailable: %s", feed_url)
             continue
+
+        feeds_ok += 1
 
         try:
             body = response.content[:config.WEBSITE_MAX_BYTES]
@@ -360,7 +367,10 @@ def search_rss_feeds() -> int:
         except Exception:
             continue
 
-        for entry in parse_feed_entries(xml_text):
+        entries = parse_feed_entries(xml_text)
+        articles += len(entries)
+
+        for entry in entries:
             entry_text = f"{entry.get('title', '')}\n{entry.get('description', '')}"
             signal = PreCASignal(
                 source_type="rss",
@@ -374,6 +384,7 @@ def search_rss_feeds() -> int:
             candidate = handle_candidate_signal(signal)
             if candidate:
                 processed += 1
+                candidates += 1
 
             # Inspect a few explicit links found in the feed item.
             for link in extract_urls(entry_text)[:3]:
@@ -381,6 +392,14 @@ def search_rss_feeds() -> int:
                     website_candidate = inspect_website(link)
                     if website_candidate:
                         processed += 1
+
+    log.info(
+        "RSS diagnostics | feeds_ok=%s feeds_failed=%s articles=%s qualifying=%s",
+        feeds_ok,
+        feeds_failed,
+        articles,
+        candidates,
+    )
 
     return processed
 
@@ -556,17 +575,6 @@ def is_probable_project_website(url: str) -> bool:
 # WEBSITE DISCOVERY
 # ============================================================================
 
-def extract_html_title(html: str) -> str:
-    match = re.search(
-        r"<title[^>]*>(.*?)</title>",
-        html or "",
-        flags=re.IGNORECASE | re.DOTALL,
-    )
-    if not match:
-        return ""
-    return re.sub(r"\\s+", " ", unescape(match.group(1))).strip()
-
-
 def inspect_website(url: str) -> Optional[ProjectCandidate]:
     if not config.WEBSITE_DISCOVERY_ENABLED:
         return None
@@ -704,6 +712,8 @@ def run() -> None:
     log.info("==============================================")
     log.info("BSC RADAR V3 STARTING")
     log.info("Pre-CA intelligence mode enabled")
+    log.info("RSS feeds configured: %s", len(getattr(config, "RSS_FEEDS", [])))
+    log.info("Website seeds configured: %s", len(getattr(config, "WEBSITE_SEEDS", [])))
     log.info("==============================================")
 
     while not stop_event.is_set():

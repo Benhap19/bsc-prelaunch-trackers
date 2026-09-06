@@ -172,6 +172,7 @@ DEFAULT_RSS_FEEDS = [
     "https://news.google.com/rss/search?q=crypto+presale+BSC+when%3A1d&hl=en-US&gl=US&ceid=US%3Aen",
     "https://news.google.com/rss/search?q=%22fair+launch%22+crypto+BSC+when%3A1d&hl=en-US&gl=US&ceid=US%3Aen",
     "https://cointelegraph.com/rss",
+    "https://app.chaingpt.org/rssfeeds-bnb.xml",
 ]
 
 RSS_FEEDS = [
@@ -224,7 +225,7 @@ MAX_TEXT_LENGTH = int(
 
 # Minimum score before a discovered signal is stored.
 PRE_CA_MIN_SCORE = int(
-    os.getenv("PRE_CA_MIN_SCORE", "45")
+    os.getenv("PRE_CA_MIN_SCORE", "35")
 )
 
 # Score required before sending a Telegram alert.
