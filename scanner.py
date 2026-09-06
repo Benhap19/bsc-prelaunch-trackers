@@ -47,6 +47,10 @@ from bsc_radar_v3_core import (
     format_pre_ca_alert,
     handle_signal,
     should_alert,
+    get_domain,
+    normalize_url,
+    extract_tickers,
+    utc_now,
 )
 
 from db import init_db, upsert_prelaunch
@@ -364,7 +368,7 @@ def search_rss_feeds() -> int:
                 text=entry_text,
                 url=entry.get("link", feed_url),
                 launch_text=entry.get("title", ""),
-                observed_at=entry.get("published", "") or config_utc_now(),
+                observed_at=entry.get("published", "") or utc_now(),
                 raw=entry,
             )
             candidate = handle_candidate_signal(signal)
@@ -552,6 +556,17 @@ def is_probable_project_website(url: str) -> bool:
 # WEBSITE DISCOVERY
 # ============================================================================
 
+def extract_html_title(html: str) -> str:
+    match = re.search(
+        r"<title[^>]*>(.*?)</title>",
+        html or "",
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if not match:
+        return ""
+    return re.sub(r"\\s+", " ", unescape(match.group(1))).strip()
+
+
 def inspect_website(url: str) -> Optional[ProjectCandidate]:
     if not config.WEBSITE_DISCOVERY_ENABLED:
         return None
@@ -599,7 +614,7 @@ def inspect_website(url: str) -> Optional[ProjectCandidate]:
         },
     )
 
-    return handle_signal(signal)
+    return handle_candidate_signal(signal)
 
 
 def html_to_text(html: str) -> str:
