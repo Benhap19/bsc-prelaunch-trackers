@@ -518,6 +518,9 @@ def extract_project_name(
     # --------------------------------------------------------
 
     patterns = [
+        # News/headline pattern: "Apeing’s $0.0001 Stage 1..."
+        # captures the named project instead of the whole article headline.
+        r"\b([A-Z][A-Za-z0-9._-]{2,50})[’\']s\s+(?=\$?\d|stage\b|presale\b|launch\b|countdown\b)",
         r"(?:project|token|coin)\s*(?:name)?\s*[:\-]\s*([A-Za-z0-9][A-Za-z0-9 _.-]{1,60})",
         r"(?:introducing|meet|welcome)\s+([A-Za-z0-9][A-Za-z0-9 _.-]{1,60})",
         r"(?:our project is|we are building)\s+([A-Za-z0-9][A-Za-z0-9 _.-]{1,60})",
