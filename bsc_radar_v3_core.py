@@ -64,6 +64,29 @@ except Exception:
 DEFAULT_MIN_SCORE = 45
 DEFAULT_ALERT_SCORE = 60
 
+# A single public article is a lead, not confirmation.
+SINGLE_SOURCE_SCORE_CAP = 59
+
+TICKER_STOPWORDS = {
+    "BSC", "BNB", "CHAIN", "CA", "SOON", "TOKEN", "COIN",
+    "LAUNCH", "PRESALE", "LIVE", "NEW", "BUY", "SELL",
+    "THE", "AND", "FOR", "NOW", "USD", "USDT", "TG", "X",
+}
+
+GENERIC_NAME_PATTERNS = [
+    r"\bbest crypto presale\b",
+    r"\bbest presale\b",
+    r"\bcrypto presale\b",
+    r"\bpresale live\b",
+    r"\bpresale today\b",
+    r"\bprice increasing\b",
+    r"\bact on\b",
+    r"\bmarket update\b",
+    r"\bcrypto news\b",
+    r"\blatest crypto\b",
+    r"\btop crypto\b",
+]
+
 ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
 
 
@@ -414,6 +437,9 @@ def extract_tickers(text: str) -> List[str]:
     for ticker in found:
         ticker = ticker.upper()
 
+        if ticker in TICKER_STOPWORDS:
+            continue
+
         if ticker in seen:
             continue
 
@@ -498,6 +524,26 @@ def clean_project_name(name: str) -> str:
     return name.strip(" -_|:;,.")
 
 
+def is_generic_project_name(name: str) -> bool:
+    name = clean_project_name(name)
+    if not name:
+        return True
+
+    lowered = name.lower()
+    words = lowered.split()
+
+    if len(lowered) > 70 or len(words) >= 8:
+        return True
+
+    if any(re.search(pattern, lowered) for pattern in GENERIC_NAME_PATTERNS):
+        return True
+
+    if any(mark in name for mark in ("|", " — ", " - ", " : ")) and len(words) >= 5:
+        return True
+
+    return False
+
+
 def extract_project_name(
     text: str,
     ticker: str = "",
@@ -544,7 +590,7 @@ def extract_project_name(
                 match.group(1)
             )
 
-            if candidate:
+            if candidate and not is_generic_project_name(candidate):
                 return candidate[:80]
 
     # --------------------------------------------------------
@@ -558,8 +604,9 @@ def extract_project_name(
         tag = hashtags[0]
 
         if len(tag) >= 3:
-
-            return clean_project_name(tag)[:80]
+            cleaned = clean_project_name(tag)
+            if cleaned and not is_generic_project_name(cleaned):
+                return cleaned[:80]
 
     # --------------------------------------------------------
     # Ticker fallback
@@ -595,8 +642,7 @@ def extract_project_name(
 
         first = clean_project_name(first)
 
-        if len(first) >= 3:
-
+        if len(first) >= 3 and not is_generic_project_name(first):
             return first[:80]
 
     return ""
@@ -903,11 +949,16 @@ def candidate_key(
         project_name
     ).lower()
 
-    if ticker and website:
-        value = f"{ticker}|{website}"
+    # Prefer ticker + project identity. This lets a later website signal
+    # merge into the same project instead of creating a second candidate.
+    if ticker and project_name:
+        value = f"{ticker}|{project_name}"
 
     elif ticker:
         value = ticker
+
+    elif website:
+        value = website
 
     else:
         value = project_name
@@ -1115,10 +1166,10 @@ def signal_to_candidate(
     )
 
     if not project_name:
+        return None
 
-        project_name = (
-            "Unknown BSC Project"
-        )
+    if is_generic_project_name(project_name):
+        return None
 
     # --------------------------------------------------------
     # Social links
@@ -1268,14 +1319,26 @@ def merge_candidates(
         *(incoming.source_types or []),
     })
 
-    # Reward independent evidence channels, not repeated polling.
+    # Independent source diversity raises confidence and unlocks the
+    # underlying evidence strength. Repeated polling does not.
     diversity_bonus = min(15, max(0, len(existing.source_types) - 1) * 7)
-    existing.confidence = min(100, max(existing.score, existing.confidence, incoming.confidence) + diversity_bonus)
-    existing.score = existing.confidence
-
-    existing.stage = classify_stage(
-        existing.score
+    evidence_strength = max(
+        existing.score,
+        existing.confidence,
+        incoming.score,
+        incoming.confidence,
     )
+    existing.confidence = min(100, evidence_strength + diversity_bonus)
+
+    if len(existing.source_types) < 2:
+        existing.score = min(existing.score, SINGLE_SOURCE_SCORE_CAP)
+    elif len(existing.source_types) < 3:
+        # Two sources can reach WATCH/HIGH POTENTIAL, but not HOT.
+        existing.score = min(79, evidence_strength + diversity_bonus)
+    else:
+        existing.score = min(100, evidence_strength + diversity_bonus)
+
+    existing.stage = classify_stage(existing.score)
 
     existing.signal_count += (
         incoming.signal_count
@@ -1479,8 +1542,16 @@ class PreCARadar:
         )
 
         if candidate is None:
-
             return None
+
+        # Keep raw evidence strength in confidence, but cap the displayed
+        # score until a second independent source confirms the project.
+        candidate.confidence = candidate.score
+        candidate.score = min(
+            candidate.score,
+            SINGLE_SOURCE_SCORE_CAP,
+        )
+        candidate.stage = classify_stage(candidate.score)
 
         key = candidate_key(
             candidate.project_name,

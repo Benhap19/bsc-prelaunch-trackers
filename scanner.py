@@ -637,6 +637,9 @@ def is_probable_project_website(url: str) -> bool:
         "news.google.com", "x.com", "twitter.com", "t.me",
         "telegram.me", "youtube.com", "youtu.be",
         "facebook.com", "instagram.com", "linkedin.com",
+        "google.com", "google-analytics.com", "googletagmanager.com",
+        "googlesyndication.com", "doubleclick.net", "gstatic.com",
+        "googleapis.com", "googleusercontent.com",
     }
     return host not in blocked
 
@@ -690,17 +693,6 @@ def discover_project_links_from_article(article_url: str) -> List[str]:
             break
 
     return found
-
-
-def extract_html_title(html: str) -> str:
-    """Extract a concise HTML <title> for website evidence."""
-    if not html:
-        return ""
-    match = re.search(r"<title[^>]*>(.*?)</title>", html, flags=re.IGNORECASE | re.DOTALL)
-    if not match:
-        return ""
-    title = unescape(re.sub(r"\s+", " ", match.group(1))).strip()
-    return title[:300]
 
 
 def inspect_website(
