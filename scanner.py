@@ -370,8 +370,20 @@ def search_rss_feeds() -> int:
         entries = parse_feed_entries(xml_text)
         articles += len(entries)
 
+        feed_context = rss_bsc_context(feed_url)
+
         for entry in entries:
-            entry_text = f"{entry.get('title', '')}\n{entry.get('description', '')}"
+            raw_text = f"{entry.get('title', '')}\n{entry.get('description', '')}"
+
+            # BNB/BSC-specific feeds provide trusted network context even when
+            # an individual headline omits the chain name. Still require a
+            # concrete pre-launch signal so ordinary crypto news is rejected.
+            entry_text = raw_text
+            if feed_context and rss_has_prelaunch_intent(raw_text):
+                entry_text = f"{feed_context}\n{raw_text}"
+            elif feed_context:
+                continue
+
             signal = PreCASignal(
                 source_type="rss",
                 source_name=get_domain(feed_url) or feed_url,
@@ -379,7 +391,7 @@ def search_rss_feeds() -> int:
                 url=entry.get("link", feed_url),
                 launch_text=entry.get("title", ""),
                 observed_at=entry.get("published", "") or utc_now(),
-                raw=entry,
+                raw={**entry, "feed_context": feed_context},
             )
             candidate = handle_candidate_signal(signal)
             if candidate:
@@ -403,6 +415,35 @@ def search_rss_feeds() -> int:
 
     return processed
 
+
+
+def rss_bsc_context(feed_url: str) -> str:
+    """Return trusted network context encoded by a BSC/BNB-focused feed URL."""
+    value = (feed_url or "").lower()
+    if any(token in value for token in (
+        "rssfeeds-bnb",
+        "bnb+chain",
+        "bnb%20chain",
+        "bsc+crypto",
+        "bsc%20crypto",
+    )):
+        return "BSC / BNB Chain"
+    return ""
+
+
+def rss_has_prelaunch_intent(text: str) -> bool:
+    """Keep RSS discovery focused on projects before/around launch."""
+    value = (text or "").lower()
+    indicators = (
+        "launching soon", "launch soon", "coming soon",
+        "upcoming launch", "set to launch", "will launch",
+        "plans to launch", "presale", "pre-sale", "pre sale",
+        "fair launch", "fairlaunch", "stealth launch",
+        "contract soon", "ca soon", "ca coming",
+        "contract coming", "contract address soon",
+        "liquidity soon", "liquidity coming",
+    )
+    return any(item in value for item in indicators)
 
 def parse_feed_entries(xml_text: str) -> List[Dict[str, str]]:
     """
