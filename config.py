@@ -218,6 +218,11 @@ MAX_TEXT_LENGTH = int(
     os.getenv("MAX_TEXT_LENGTH", "3000")
 )
 
+# Keep article-to-project discovery bounded.
+MAX_PROJECT_LINKS_PER_ARTICLE = int(
+    os.getenv("MAX_PROJECT_LINKS_PER_ARTICLE", "2")
+)
+
 
 # ============================================================
 # PRE-CA SIGNAL SCORING

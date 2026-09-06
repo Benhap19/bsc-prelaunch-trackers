@@ -67,10 +67,24 @@ def init_db():
             mentions INTEGER DEFAULT 1,
             contract_address TEXT DEFAULT '',
             deployer TEXT DEFAULT '',
+            source_types TEXT DEFAULT '',
+            confidence INTEGER DEFAULT 0,
             first_seen TEXT DEFAULT CURRENT_TIMESTAMP,
             last_seen TEXT DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    # Safe migrations for databases created by earlier V3-V6 builds.
+    for column, definition in (
+        ("source_types", "TEXT DEFAULT ''"),
+        ("confidence", "INTEGER DEFAULT 0"),
+    ):
+        try:
+            c.execute(
+                f"ALTER TABLE prelaunch_projects ADD COLUMN {column} {definition}"
+            )
+        except sqlite3.OperationalError:
+            pass
+
     c.execute("""
         CREATE INDEX IF NOT EXISTS idx_prelaunch_score
         ON prelaunch_projects(prelaunch_score)
@@ -86,9 +100,9 @@ def upsert_prelaunch(p):
         INSERT INTO prelaunch_projects(
             name, symbol, description, website, x_url, telegram_url,
             launch_date, bsc_intent, prelaunch_score, stage, source,
-            mentions, contract_address, deployer
+            mentions, contract_address, deployer, source_types, confidence
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(symbol) DO UPDATE SET
             name=excluded.name,
             description=excluded.description,
@@ -103,6 +117,8 @@ def upsert_prelaunch(p):
             mentions=excluded.mentions,
             contract_address=excluded.contract_address,
             deployer=excluded.deployer,
+            source_types=excluded.source_types,
+            confidence=excluded.confidence,
             last_seen=CURRENT_TIMESTAMP
     """, (
         p.get("name", ""),
@@ -119,6 +135,8 @@ def upsert_prelaunch(p):
         int(p.get("signal_count", p.get("mentions", 1)) or 1),
         p.get("contract_address", ""),
         p.get("deployer", ""),
+        p.get("source_types", ""),
+        int(p.get("confidence", p.get("score", 0)) or 0),
     ))
     c.commit()
     c.close()

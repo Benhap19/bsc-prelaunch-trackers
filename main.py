@@ -46,6 +46,8 @@ def dashboard():
         x_url = html.escape(project.get("x_url") or "")
         source = html.escape(project.get("source") or "-")
         mentions = int(project.get("mentions") or 1)
+        evidence = html.escape(project.get("source_types") or "-")
+        confidence = int(project.get("confidence") or score)
 
         links = []
         if website:
@@ -59,8 +61,9 @@ def dashboard():
         <tr>
             <td><strong>{name}</strong><br><small>${symbol}</small></td>
             <td>{stage}</td>
-            <td><strong>{score}/100</strong></td>
+            <td><strong>{confidence}/100</strong></td>
             <td>{mentions}</td>
+            <td>{evidence}</td>
             <td>{source}</td>
             <td>{" · ".join(links) if links else "-"}</td>
             <td>NOT DEPLOYED</td>
@@ -68,7 +71,7 @@ def dashboard():
         """
 
     if not rows:
-        rows = '<tr><td colspan="7" class="empty">No qualifying pre-CA projects discovered yet.</td></tr>'
+        rows = '<tr><td colspan="8" class="empty">No qualifying pre-CA projects discovered yet.</td></tr>'
 
     return f"""
 <!doctype html>
@@ -104,7 +107,7 @@ small{{color:#666}}
 <table>
 <tr>
 <th>Project</th><th>Stage</th><th>Score</th><th>Signals</th>
-<th>Source</th><th>Links</th><th>Contract</th>
+<th>Evidence</th><th>Source</th><th>Links</th><th>Contract</th>
 </tr>
 {rows}
 </table>

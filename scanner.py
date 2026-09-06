@@ -398,12 +398,39 @@ def search_rss_feeds() -> int:
                 processed += 1
                 candidates += 1
 
-            # Inspect a few explicit links found in the feed item.
+            # Inspect explicit project links and a small number of outbound
+            # links from qualifying article pages. This adds a second evidence
+            # channel without indiscriminate web crawling.
+            links = []
             for link in extract_urls(entry_text)[:3]:
                 if is_probable_project_website(link):
-                    website_candidate = inspect_website(link)
-                    if website_candidate:
-                        processed += 1
+                    links.append(link)
+
+            article_link = entry.get("link", "")
+            if (
+                config.WEBSITE_DISCOVERY_ENABLED
+                and article_link
+                and rss_has_prelaunch_intent(raw_text)
+            ):
+                links.extend(discover_project_links_from_article(article_link))
+
+            seen_hosts = set()
+            for link in links:
+                link = normalize_url(link)
+                host = get_domain(link)
+                if not host or host in seen_hosts:
+                    continue
+                seen_hosts.add(host)
+                website_candidate = inspect_website(
+                    link,
+                    context_text=entry_text,
+                )
+                if website_candidate:
+                    processed += 1
+                if len(seen_hosts) >= getattr(
+                    config, "MAX_PROJECT_LINKS_PER_ARTICLE", 2
+                ):
+                    break
 
     log.info(
         "RSS diagnostics | feeds_ok=%s feeds_failed=%s articles=%s qualifying=%s",
@@ -579,6 +606,8 @@ def handle_candidate_signal(
             "signal_count": candidate.signal_count,
             "contract_address": candidate.contract_address,
             "network": candidate.network,
+            "source_types": ",".join(candidate.source_types or []),
+            "confidence": candidate.confidence or candidate.score,
         })
     except Exception:
         log.exception("Failed to persist pre-CA candidate")
@@ -616,7 +645,57 @@ def is_probable_project_website(url: str) -> bool:
 # WEBSITE DISCOVERY
 # ============================================================================
 
-def inspect_website(url: str) -> Optional[ProjectCandidate]:
+def discover_project_links_from_article(article_url: str) -> List[str]:
+    """Extract a small set of likely project sites from a news article."""
+    response = http_get(
+        article_url,
+        headers={"Accept": "text/html,application/xhtml+xml"},
+        timeout=config.WEBSITE_REQUEST_TIMEOUT,
+    )
+    if response is None or response.status_code >= 400:
+        return []
+
+    try:
+        html = response.content[:config.WEBSITE_MAX_BYTES].decode(
+            response.encoding or "utf-8", errors="ignore"
+        )
+    except Exception:
+        return []
+
+    article_host = get_domain(article_url)
+    found = []
+    seen = set()
+
+    # Capture absolute URLs from href attributes and plain page text.
+    raw_links = re.findall(
+        r"https?://[^\s\"'<>]+",
+        html,
+        flags=re.IGNORECASE,
+    )
+
+    for raw in raw_links:
+        url = normalize_url(raw.rstrip(".,!?);]}>"))
+        host = get_domain(url)
+        if not host or host == article_host:
+            continue
+        if not is_probable_project_website(url):
+            continue
+        if host in seen:
+            continue
+        seen.add(host)
+        found.append(url)
+        if len(found) >= getattr(
+            config, "MAX_PROJECT_LINKS_PER_ARTICLE", 2
+        ):
+            break
+
+    return found
+
+
+def inspect_website(
+    url: str,
+    context_text: str = "",
+) -> Optional[ProjectCandidate]:
     if not config.WEBSITE_DISCOVERY_ENABLED:
         return None
 
@@ -651,15 +730,20 @@ def inspect_website(url: str) -> Optional[ProjectCandidate]:
 
     text = html_to_text(html)
 
+    combined_text = " ".join(
+        part for part in (context_text, text) if part
+    )
+
     signal = PreCASignal(
         source_type="website",
         source_name=get_domain(url) or "Website",
-        text=text[:config.MAX_TEXT_LENGTH],
+        text=combined_text[:config.MAX_TEXT_LENGTH],
         url=url,
         website_url=url,
         raw={
             "title": extract_html_title(html),
             "source_url": url,
+            "project_link_discovered": bool(context_text),
         },
     )
 

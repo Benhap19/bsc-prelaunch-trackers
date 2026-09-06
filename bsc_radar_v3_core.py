@@ -235,6 +235,10 @@ class ProjectCandidate:
 
     raw: Dict[str, Any] = field(default_factory=dict)
 
+    # Distinct evidence channels supporting this candidate.
+    source_types: List[str] = field(default_factory=list)
+    confidence: int = 0
+
     def __post_init__(self) -> None:
         if not self.first_seen:
             self.first_seen = utc_now()
@@ -683,6 +687,10 @@ def score_pre_ca_signal(signal: PreCASignal) -> int:
 
     if contains_any(text, BSC_KEYWORDS):
         score += 25
+    elif (signal.raw or {}).get("feed_context") == "BSC / BNB Chain":
+        # A chain-specific public feed is valid network evidence even
+        # when the individual headline omits the chain name.
+        score += 25
 
     # --------------------------------------------------------
     # Launch intent
@@ -734,6 +742,16 @@ def score_pre_ca_signal(signal: PreCASignal) -> int:
 
     if signal.ticker:
         score += 10
+
+    # --------------------------------------------------------
+    # Explicit source metadata
+    # --------------------------------------------------------
+
+    if signal.source_type.lower() == "website":
+        score += 5
+
+    if (signal.raw or {}).get("project_link_discovered"):
+        score += 5
 
     # --------------------------------------------------------
     # Website
@@ -1212,6 +1230,8 @@ def signal_to_candidate(
             "url": signal.url,
             "text": text,
         },
+        source_types=[signal.source_type.lower()],
+        confidence=score,
     )
 
     return candidate
@@ -1242,6 +1262,16 @@ def merge_candidates(
         existing.score,
         incoming.score,
     )
+
+    existing.source_types = sorted({
+        *(existing.source_types or []),
+        *(incoming.source_types or []),
+    })
+
+    # Reward independent evidence channels, not repeated polling.
+    diversity_bonus = min(15, max(0, len(existing.source_types) - 1) * 7)
+    existing.confidence = min(100, max(existing.score, existing.confidence, incoming.confidence) + diversity_bonus)
+    existing.score = existing.confidence
 
     existing.stage = classify_stage(
         existing.score
@@ -1421,6 +1451,20 @@ class PreCARadar:
         # ----------------------------------------------------
         # Duplicate signal
         # ----------------------------------------------------
+
+        # The same RSS/X/website observation can be seen on every
+        # scan. Do not let repeated polling inflate signal_count.
+        if signal.signal_id in self.signals:
+            existing_signal = self.signals[signal.signal_id]
+            key = candidate_key(
+                signal.project_name,
+                signal.ticker,
+                signal.website_url,
+            )
+            existing = self.projects.get(key)
+            if existing:
+                return existing
+            return None
 
         self.signals[
             signal.signal_id
