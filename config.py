@@ -173,6 +173,9 @@ DEFAULT_RSS_FEEDS = [
     "https://news.google.com/rss/search?q=%22fair+launch%22+crypto+BSC+when%3A1d&hl=en-US&gl=US&ceid=US%3Aen",
     "https://cointelegraph.com/rss",
     "https://app.chaingpt.org/rssfeeds-bnb.xml",
+    "https://bsc.news/feed-v2.xml",
+    "https://news.google.com/rss/search?q=BSC+meme+coin+launch+when%3A1d&hl=en-US&gl=US&ceid=US%3Aen",
+    "https://news.google.com/rss/search?q=BNB+Chain+presale+token+when%3A1d&hl=en-US&gl=US&ceid=US%3Aen",
 ]
 
 RSS_FEEDS = [
