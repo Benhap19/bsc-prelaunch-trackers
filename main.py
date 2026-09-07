@@ -1,11 +1,11 @@
 import html
 import threading
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 
 from db import all_prelaunch, init_db
-from scanner import run
+from scanner import handle_telegram_update, run, _telegram_secret
 
 
 app = FastAPI(
@@ -29,6 +29,17 @@ def startup_event():
 @app.get("/api/projects")
 def projects():
     return all_prelaunch()
+
+
+@app.post("/telegram/webhook")
+async def telegram_webhook(request: Request):
+    secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    if not secret or secret != _telegram_secret():
+        return {"ok": False, "error": "unauthorized"}
+
+    update = await request.json()
+    handle_telegram_update(update)
+    return {"ok": True}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -61,7 +72,8 @@ def dashboard():
         <tr>
             <td><strong>{name}</strong><br><small>${symbol}</small></td>
             <td>{stage}</td>
-            <td><strong>{confidence}/100</strong></td>
+            <td><strong>{score}/100</strong></td>
+            <td>{confidence}/100</td>
             <td>{mentions}</td>
             <td>{evidence}</td>
             <td>{source}</td>
@@ -71,7 +83,7 @@ def dashboard():
         """
 
     if not rows:
-        rows = '<tr><td colspan="8" class="empty">No qualifying pre-CA projects discovered yet.</td></tr>'
+        rows = '<tr><td colspan="9" class="empty">No qualifying pre-CA projects discovered yet.</td></tr>'
 
     return f"""
 <!doctype html>
@@ -87,7 +99,7 @@ body{{font-family:Arial,sans-serif;margin:0;background:#f4f6f8;color:#111}}
 h1{{margin:0 0 8px;font-size:28px}}
 .badge{{display:inline-block;padding:6px 10px;border-radius:999px;background:#111;color:#fff}}
 .table-wrap{{overflow-x:auto}}
-table{{width:100%;border-collapse:collapse;min-width:900px}}
+table{{width:100%;border-collapse:collapse;min-width:1020px}}
 th,td{{padding:12px;border-bottom:1px solid #e5e7eb;text-align:left}}
 th{{background:#111;color:#fff}}
 .empty{{text-align:center;padding:30px;color:#666}}
@@ -106,7 +118,7 @@ small{{color:#666}}
 <div class="card table-wrap">
 <table>
 <tr>
-<th>Project</th><th>Stage</th><th>Score</th><th>Signals</th>
+<th>Project</th><th>Stage</th><th>Score</th><th>Confidence</th><th>Signals</th>
 <th>Evidence</th><th>Source</th><th>Links</th><th>Contract</th>
 </tr>
 {rows}

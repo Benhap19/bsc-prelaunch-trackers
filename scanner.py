@@ -27,6 +27,7 @@ IMPORTANT:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -80,6 +81,8 @@ stop_event = threading.Event()
 
 rpc_index = 0
 last_scanned_block: Optional[int] = None
+last_x_search_at = 0.0
+telegram_webhook_registered = False
 
 http_session = requests.Session()
 
@@ -208,11 +211,9 @@ def send_telegram_message(text: str) -> bool:
 # ============================================================================
 
 def search_x() -> int:
-    """
-    Search recent X posts for BSC pre-launch signals.
+    """Search recent X posts for high-intent BSC pre-launch signals."""
+    global last_x_search_at
 
-    X is disabled by default until the API credentials/credits are available.
-    """
     if not config.X_ENABLED:
         return 0
 
@@ -220,10 +221,13 @@ def search_x() -> int:
         log.warning("X discovery enabled but X_BEARER_TOKEN is missing.")
         return 0
 
-    headers = {
-        "Authorization": f"Bearer {config.X_BEARER_TOKEN}",
-    }
+    now = time.time()
+    interval = max(60, int(getattr(config, "X_SEARCH_INTERVAL", 300)))
+    if last_x_search_at and now - last_x_search_at < interval:
+        return 0
+    last_x_search_at = now
 
+    headers = {"Authorization": f"Bearer {config.X_BEARER_TOKEN}"}
     processed = 0
 
     for query in config.X_SEARCH_QUERIES:
@@ -234,13 +238,11 @@ def search_x() -> int:
                 "query": query,
                 "max_results": config.X_MAX_RESULTS,
                 "tweet.fields": (
-                    "created_at,author_id,public_metrics,"
-                    "entities,lang,conversation_id"
+                    "created_at,author_id,public_metrics,entities,lang,"
+                    "conversation_id"
                 ),
                 "expansions": "author_id",
-                "user.fields": (
-                    "username,name,public_metrics,verified"
-                ),
+                "user.fields": "username,name,public_metrics,verified",
             },
             timeout=20,
         )
@@ -250,10 +252,9 @@ def search_x() -> int:
 
         if response.status_code == 402:
             log.warning(
-                "X API returned 402 credits depleted. "
-                "X discovery will be skipped."
+                "X API returned 402 credits depleted. X discovery will be skipped."
             )
-            continue
+            return processed
 
         if response.status_code != 200:
             log.warning(
@@ -274,12 +275,10 @@ def search_x() -> int:
         }
 
         for tweet in data.get("data", []):
-            process_x_post(
-                tweet,
-                users.get(str(tweet.get("author_id")), {}),
-            )
-            processed += 1
+            if process_x_post(tweet, users.get(str(tweet.get("author_id")), {})):
+                processed += 1
 
+    log.info("X discovery processed=%s queries=%s", processed, len(config.X_SEARCH_QUERIES))
     return processed
 
 
@@ -290,6 +289,11 @@ def process_x_post(
     text = tweet.get("text", "")
     metrics = tweet.get("public_metrics") or {}
     author_metrics = author.get("public_metrics") or {}
+
+    # Pre-CA means we should not promote posts that explicitly publish a
+    # BSC contract address. Ignore posts with a clear contract/CA assignment.
+    if re.search(r"(?:ca|contract(?: address)?)\s*[:=]\s*0x[a-fA-F0-9]{40}\b", text, re.I):
+        return None
 
     urls = extract_urls(text)
     website = ""
@@ -316,7 +320,8 @@ def process_x_post(
 
     signal = PreCASignal(
         source_type="x",
-        source_name="X",
+        source_family="x",
+        source_name=f"X:{author.get('username', 'unknown')}",
         text=text,
         url=f"https://x.com/i/web/status/{tweet.get('id')}" if tweet.get("id") else "",
         website_url=website,
@@ -332,6 +337,137 @@ def process_x_post(
         },
     )
     return handle_candidate_signal(signal)
+
+
+# ============================================================================
+# TELEGRAM SOURCE DISCOVERY (WEBHOOK)
+# ============================================================================
+
+def _telegram_source_allowed(chat: Dict[str, Any]) -> bool:
+    chat_id = str(chat.get("id", ""))
+    username = str(chat.get("username", "")).lstrip("@").lower()
+
+    allowed_usernames = {
+        str(x).lstrip("@").lower()
+        for x in getattr(config, "TELEGRAM_SOURCE_CHANNELS", [])
+        if str(x).strip()
+    }
+    allowed_ids = {
+        str(x).strip()
+        for x in getattr(config, "TELEGRAM_SOURCE_CHAT_IDS", [])
+        if str(x).strip()
+    }
+
+    return bool(
+        (username and username in allowed_usernames)
+        or (chat_id and chat_id in allowed_ids)
+    )
+
+
+def _telegram_secret() -> str:
+    token = config.TELEGRAM_BOT_TOKEN or ""
+    return hashlib.sha256(("bsc-radar-telegram:" + token).encode()).hexdigest()[:32]
+
+
+def register_telegram_webhook() -> bool:
+    """Register the Render webhook with Telegram; never uses getUpdates."""
+    global telegram_webhook_registered
+
+    if telegram_webhook_registered:
+        return True
+    if not getattr(config, "TELEGRAM_DISCOVERY_ENABLED", False):
+        return False
+    if not getattr(config, "TELEGRAM_WEBHOOK_ENABLED", False):
+        return False
+    if not config.TELEGRAM_BOT_TOKEN:
+        log.warning("Telegram webhook discovery enabled but bot token is missing.")
+        return False
+    if not getattr(config, "TELEGRAM_SOURCE_CHANNELS", []) and not getattr(config, "TELEGRAM_SOURCE_CHAT_IDS", []):
+        log.warning("Telegram discovery enabled but no source channels/chat IDs are configured.")
+        return False
+
+    base_url = (getattr(config, "RENDER_EXTERNAL_URL", "") or "").rstrip("/")
+    if not base_url:
+        import os
+        base_url = os.getenv("RENDER_EXTERNAL_URL", "").rstrip("/")
+    if not base_url:
+        log.warning("Telegram webhook cannot register: RENDER_EXTERNAL_URL is unavailable.")
+        return False
+
+    webhook_url = base_url + "/telegram/webhook"
+    api_url = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/setWebhook"
+    payload = {
+        "url": webhook_url,
+        "secret_token": _telegram_secret(),
+        "allowed_updates": ["channel_post", "edited_channel_post", "message", "edited_message"],
+        "drop_pending_updates": False,
+    }
+
+    try:
+        response = http_session.post(api_url, json=payload, timeout=15)
+        if response.status_code != 200 or not response.json().get("ok"):
+            log.warning("Telegram webhook registration failed: %s %s", response.status_code, response.text[:500])
+            return False
+        telegram_webhook_registered = True
+        log.info("Telegram source webhook registered | sources=%s", len(getattr(config, "TELEGRAM_SOURCE_CHANNELS", [])) + len(getattr(config, "TELEGRAM_SOURCE_CHAT_IDS", [])))
+        return True
+    except (requests.RequestException, ValueError) as exc:
+        log.warning("Telegram webhook registration error: %s", exc)
+        return False
+
+
+def handle_telegram_update(update: Dict[str, Any]) -> int:
+    """Process one authorized Telegram channel/group update."""
+    if not getattr(config, "TELEGRAM_DISCOVERY_ENABLED", False):
+        return 0
+
+    message = (
+        update.get("channel_post")
+        or update.get("edited_channel_post")
+        or update.get("message")
+        or update.get("edited_message")
+        or {}
+    )
+    chat = message.get("chat") or {}
+
+    if not _telegram_source_allowed(chat):
+        return 0
+
+    text = str(message.get("text") or message.get("caption") or "").strip()
+    if not text:
+        return 0
+
+    # Reject explicit published CAs. This keeps Telegram useful for genuine
+    # pre-launch announcements instead of post-launch calls.
+    if re.search(r"(?:ca|contract(?: address)?)\s*[:=]\s*0x[a-fA-F0-9]{40}\b", text, re.I):
+        return 0
+
+    username = str(chat.get("username") or "").lstrip("@")
+    source_name = f"TG:@{username}" if username else f"TG:{chat.get('id', 'unknown')}"
+    message_id = message.get("message_id", "")
+    chat_id = chat.get("id", "")
+
+    signal = PreCASignal(
+        source_type="telegram",
+        source_family="telegram",
+        source_name=source_name,
+        text=text,
+        url=(
+            f"https://t.me/{username}/{message_id}"
+            if username and message_id else ""
+        ),
+        network="BSC",
+        observed_at=utc_now(),
+        raw={
+            "chat_id": chat_id,
+            "chat_title": chat.get("title", ""),
+            "username": username,
+            "message_id": message_id,
+        },
+    )
+
+    candidate = handle_candidate_signal(signal)
+    return 1 if candidate else 0
 
 
 # ============================================================================
@@ -814,6 +950,8 @@ def scan_once() -> Dict[str, int]:
         "websites": 0,
     }
 
+    register_telegram_webhook()
+
     log.info("Starting BSC Radar V3 scan cycle")
 
     # --------------------------------------------------------
@@ -865,6 +1003,9 @@ def run() -> None:
     log.info("==============================================")
     log.info("BSC RADAR V3 STARTING")
     log.info("Pre-CA intelligence mode enabled")
+    log.info("X discovery enabled: %s", getattr(config, "X_ENABLED", False))
+    log.info("Telegram webhook discovery: %s", getattr(config, "TELEGRAM_WEBHOOK_ENABLED", False))
+    log.info("Telegram sources configured: %s", len(getattr(config, "TELEGRAM_SOURCE_CHANNELS", [])) + len(getattr(config, "TELEGRAM_SOURCE_CHAT_IDS", [])))
     log.info("RSS feeds configured: %s", len(getattr(config, "RSS_FEEDS", [])))
     log.info("Website seeds configured: %s", len(getattr(config, "WEBSITE_SEEDS", [])))
     log.info("==============================================")

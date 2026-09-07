@@ -2,352 +2,980 @@
 BSC RADAR V3 - CONFIGURATION
 ============================
 
-Central configuration for the BSC Pre-Launch Radar.
+Central configuration for the pre-CA BSC intelligence radar.
 
 IMPORTANT:
-Do not put private API keys directly in this file.
-Use Render Environment Variables instead.
+- Put secrets in Render Environment Variables, NOT in this file.
+- Never commit real API keys or bot tokens to GitHub.
+- scanner.py will import this module.
 """
 
 import os
+from typing import List
 
 
-# ============================================================
-# GENERAL
-# ============================================================
+# ============================================================================
+# ENVIRONMENT HELPERS
+# ============================================================================
 
-APP_NAME = "BSC Pre-Launch Radar V3"
+def env(name: str, default: str = "") -> str:
+    return os.getenv(name, default).strip()
 
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 
-SCAN_INTERVAL_SECONDS = int(
-    os.getenv("SCAN_INTERVAL_SECONDS", "60")
+def env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+
+    if value is None:
+        return default
+
+    return value.strip().lower() in {
+        "1", "true", "yes", "y", "on"
+    }
+
+
+# ============================================================================
+# APPLICATION
+# ============================================================================
+
+APP_NAME = env("APP_NAME", "BSC Radar V3")
+APP_ENV = env("APP_ENV", "production")
+DEBUG = env_bool("DEBUG", False)
+
+HOST = env("HOST", "0.0.0.0")
+PORT = env_int("PORT", 10000)
+
+TIMEZONE = env("TIMEZONE", "UTC")
+
+
+# ============================================================================
+# DATABASE
+# ============================================================================
+
+DB_PATH = env("DB_PATH", "bsc_radar_v3.db")
+
+DATABASE_TIMEOUT = env_int(
+    "DATABASE_TIMEOUT",
+    30,
 )
 
 
-# ============================================================
-# BSC RPC
-# ============================================================
+# ============================================================================
+# BSC / BNB CHAIN
+# ============================================================================
 
-BSC_RPC_URLS = [
-    os.getenv(
-        "BSC_RPC_URL",
-        "https://bsc-dataseed.bnbchain.org"
+BSC_CHAIN_ID = 56
+
+BSC_RPC_URL = env(
+    "BSC_RPC_URL",
+    "https://bsc-dataseed.bnbchain.org",
+)
+
+# Optional backup RPCs. scanner.py can rotate through them if the primary
+# endpoint fails or becomes rate limited.
+BSC_RPC_URL_2 = env("BSC_RPC_URL_2", "")
+BSC_RPC_URL_3 = env("BSC_RPC_URL_3", "")
+
+BSC_RPC_URLS: List[str] = [
+    url for url in (
+        BSC_RPC_URL,
+        BSC_RPC_URL_2,
+        BSC_RPC_URL_3,
     )
+    if url
 ]
 
-RPC_TIMEOUT = int(
-    os.getenv("RPC_TIMEOUT", "20")
+# BSC is fast. Keep this reasonably low to avoid falling behind and hitting
+# public RPC rate limits.
+SCAN_INTERVAL = env_int(
+    "SCAN_INTERVAL",
+    60,
 )
 
-RPC_RETRIES = int(
-    os.getenv("RPC_RETRIES", "3")
+# Maximum number of blocks the on-chain scanner should catch up per cycle.
+MAX_BLOCKS = env_int(
+    "MAX_BLOCKS",
+    25,
 )
 
-ERROR_BACKOFF_SECONDS = int(
-    os.getenv("ERROR_BACKOFF_SECONDS", "3")
+# Number of blocks to inspect on the first run.
+FIRST_SCAN_BLOCKS = env_int(
+    "FIRST_SCAN_BLOCKS",
+    10,
 )
 
-
-# ============================================================
-# BSC BLOCK SCANNER
-# ============================================================
-
-# Number of blocks processed during one catch-up cycle.
-MAX_BLOCKS_PER_SCAN = int(
-    os.getenv("MAX_BLOCKS_PER_SCAN", "25")
+# Delay between expensive RPC requests.
+RPC_REQUEST_DELAY = env_float(
+    "RPC_REQUEST_DELAY",
+    0.05,
 )
 
-# Number of blocks scanned when the radar starts for the
-# first time.
-FIRST_SCAN_BLOCKS = int(
-    os.getenv("FIRST_SCAN_BLOCKS", "20")
+RPC_TIMEOUT = env_int(
+    "RPC_TIMEOUT",
+    20,
 )
 
-
-# ============================================================
-# TELEGRAM ALERTS
-# ============================================================
-
-TELEGRAM_ALERTS_ENABLED = (
-    os.getenv(
-        "TELEGRAM_ALERTS_ENABLED",
-        "true"
-    ).lower()
-    in ("1", "true", "yes", "on")
-)
-
-TELEGRAM_BOT_TOKEN = os.getenv(
-    "TELEGRAM_BOT_TOKEN",
-    ""
-).strip()
-
-TELEGRAM_CHAT_ID = os.getenv(
-    "TELEGRAM_CHAT_ID",
-    ""
-).strip()
-
-TELEGRAM_SEND_TIMEOUT = int(
-    os.getenv("TELEGRAM_SEND_TIMEOUT", "15")
+RPC_RETRIES = env_int(
+    "RPC_RETRIES",
+    3,
 )
 
 
-# ============================================================
-# X / TWITTER DISCOVERY
-# ============================================================
+# ============================================================================
+# PRE-CA DISCOVERY
+# ============================================================================
 
-# Keep disabled until X API credentials/credits are available.
-X_ENABLED = (
-    os.getenv(
-        "X_ENABLED",
-        "false"
-    ).lower()
-    in ("1", "true", "yes", "on")
+PRE_CA_ENABLED = env_bool(
+    "PRE_CA_ENABLED",
+    True,
 )
 
-X_BEARER_TOKEN = os.getenv(
+# Broad discovery mode stores many BSC leads for manual selection.
+BROAD_DISCOVERY_MODE = env_bool(
+    "BROAD_DISCOVERY_MODE",
+    True,
+)
+
+# Minimum score before a discovered signal is stored as a project.
+MIN_PRECA_SCORE = env_int(
+    "MIN_PRECA_SCORE",
+    15,
+)
+
+# Telegram alert threshold.
+PRE_CA_ALERT_SCORE = env_int(
+    "PRE_CA_ALERT_SCORE",
+    75,
+)
+
+# "HOT" project threshold.
+PRE_CA_HOT_SCORE = env_int(
+    "PRE_CA_HOT_SCORE",
+    85,
+)
+
+# Do not alert on the same project repeatedly unless its score increases by
+# at least this amount.
+ALERT_SCORE_INCREASE = env_int(
+    "ALERT_SCORE_INCREASE",
+    10,
+)
+
+
+# ============================================================================
+# PRE-CA SCORING WEIGHTS
+# ============================================================================
+
+# Chain evidence
+SCORE_BSC_SIGNAL = env_int(
+    "SCORE_BSC_SIGNAL",
+    15,
+)
+
+# Launch intent
+SCORE_LAUNCH_INTENT = env_int(
+    "SCORE_LAUNCH_INTENT",
+    15,
+)
+
+# Strong phrases such as "CA soon", "launching soon", "fair launch".
+SCORE_STRONG_LAUNCH_SIGNAL = env_int(
+    "SCORE_STRONG_LAUNCH_SIGNAL",
+    5,
+)
+
+# Identity
+SCORE_TICKER = env_int(
+    "SCORE_TICKER",
+    10,
+)
+
+SCORE_PROJECT_NAME = env_int(
+    "SCORE_PROJECT_NAME",
+    5,
+)
+
+# Public infrastructure
+SCORE_WEBSITE = env_int(
+    "SCORE_WEBSITE",
+    10,
+)
+
+SCORE_TELEGRAM = env_int(
+    "SCORE_TELEGRAM",
+    5,
+)
+
+SCORE_X = env_int(
+    "SCORE_X",
+    5,
+)
+
+# Timing
+SCORE_LAUNCH_TIMING = env_int(
+    "SCORE_LAUNCH_TIMING",
+    5,
+)
+
+# Community/engagement tiers
+ENGAGEMENT_SCORE_500 = env_int(
+    "ENGAGEMENT_SCORE_500",
+    4,
+)
+
+ENGAGEMENT_SCORE_3000 = env_int(
+    "ENGAGEMENT_SCORE_3000",
+    7,
+)
+
+ENGAGEMENT_SCORE_10000 = env_int(
+    "ENGAGEMENT_SCORE_10000",
+    10,
+)
+
+
+# ============================================================================
+# X / TWITTER
+# ============================================================================
+
+# Disabled by default because API access/credits may not be available.
+X_ENABLED = env_bool(
+    "X_ENABLED",
+    False,
+)
+
+X_BEARER_TOKEN = env(
     "X_BEARER_TOKEN",
-    ""
-).strip()
+)
+
+X_API_BASE = env(
+    "X_API_BASE",
+    "https://api.x.com/2",
+)
 
 X_RECENT_SEARCH_ENDPOINT = (
-    "https://api.x.com/2/tweets/search/recent"
+    f"{X_API_BASE.rstrip('/')}/tweets/search/recent"
 )
 
-X_MAX_RESULTS = int(
-    os.getenv("X_MAX_RESULTS", "10")
+X_SEARCH_INTERVAL = env_int(
+    "X_SEARCH_INTERVAL",
+    300,
 )
 
+X_MAX_RESULTS = max(
+    10,
+    min(100, env_int("X_MAX_RESULTS", 50)),
+)
+
+# High-intent queries are intentionally narrow so X does not become a generic crypto-news firehose.
 X_SEARCH_QUERIES = [
-    '(BSC OR "BNB Chain") '
-    '(launch OR launching OR presale OR "fair launch") '
-    "-is:retweet",
-
-    '(BSC OR "BNB Chain") '
-    '("contract soon" OR "CA soon" OR "contract address soon") '
-    "-is:retweet",
-
-    '(BSC OR "BNB Chain") '
-    '("stealth launch" OR "launching soon") '
-    "-is:retweet",
+    q.strip()
+    for q in env(
+        "X_SEARCH_QUERIES",
+        '(BSC OR "BNB Chain" OR BNBChain OR "Binance Smart Chain") '
+        '(token OR coin OR project OR memecoin OR meme OR presale OR launch OR launching) '
+        '-is:retweet -is:reply|'
+        '(BSC OR "BNB Chain" OR BNBChain) '
+        '(building OR developing OR community OR roadmap OR website OR telegram OR whitelist) '
+        '-is:retweet -is:reply|'
+        '(BSC OR "BNB Chain" OR BNBChain) '
+        '(soon OR upcoming OR coming OR announcement OR reveal OR presale OR fairlaunch OR stealth) '
+        '-is:retweet -is:reply',
+    ).split("|")
+    if q.strip()
 ]
 
 
-# ============================================================
-# TELEGRAM SOURCE DISCOVERY
-# ============================================================
+# ============================================================================
+# TELEGRAM DISCOVERY
+# ============================================================================
 
-# IMPORTANT:
+# This is for SOURCE monitoring, not outbound bot alerts.
 #
-# This is for authorized Telegram sources only.
-#
-# The radar does NOT magically read private Telegram groups.
-# Add public/authorized source usernames or chat IDs here.
-#
-# Example:
-# TELEGRAM_SOURCE_CHATS=@projectlaunches,-1001234567890
-#
-
-TELEGRAM_SOURCE_CHATS = os.getenv(
-    "TELEGRAM_SOURCE_CHATS",
-    ""
-).strip()
-
-
-# ============================================================
-# RSS / PUBLIC FEED DISCOVERY
-# ============================================================
-
-RSS_ENABLED = (
-    os.getenv(
-        "RSS_ENABLED",
-        "true"
-    ).lower()
-    in ("1", "true", "yes", "on")
+# Bot API bots cannot automatically read arbitrary Telegram channels. The
+# scanner should only monitor sources the configured integration is actually
+# authorized to access.
+TELEGRAM_DISCOVERY_ENABLED = env_bool(
+    "TELEGRAM_DISCOVERY_ENABLED",
+    False,
 )
 
-DEFAULT_RSS_FEEDS = [
-    "https://news.google.com/rss/search?q=BSC+crypto+launch+when%3A1d&hl=en-US&gl=US&ceid=US%3Aen",
-    "https://news.google.com/rss/search?q=%22BNB+Chain%22+token+launch+when%3A1d&hl=en-US&gl=US&ceid=US%3Aen",
-    "https://news.google.com/rss/search?q=crypto+presale+BSC+when%3A1d&hl=en-US&gl=US&ceid=US%3Aen",
-    "https://news.google.com/rss/search?q=%22fair+launch%22+crypto+BSC+when%3A1d&hl=en-US&gl=US&ceid=US%3Aen",
-    "https://cointelegraph.com/rss",
-    "https://app.chaingpt.org/rssfeeds-bnb.xml",
-    "https://bsc.news/feed-v2.xml",
-    "https://news.google.com/rss/search?q=BSC+meme+coin+launch+when%3A1d&hl=en-US&gl=US&ceid=US%3Aen",
-    "https://news.google.com/rss/search?q=BNB+Chain+presale+token+when%3A1d&hl=en-US&gl=US&ceid=US%3Aen",
-]
+TELEGRAM_API_ID = env_int(
+    "TELEGRAM_API_ID",
+    0,
+)
 
-RSS_FEEDS = [
-    item.strip()
-    for item in os.getenv(
-        "RSS_FEEDS",
-        ",".join(DEFAULT_RSS_FEEDS),
-    ).split(",")
-    if item.strip()
-]
+TELEGRAM_API_HASH = env(
+    "TELEGRAM_API_HASH",
+)
 
-WEBSITE_SEEDS = [
-    item.strip()
-    for item in os.getenv(
-        "WEBSITE_SEEDS",
+TELEGRAM_SESSION = env(
+    "TELEGRAM_SESSION",
+)
+
+# Comma-separated public usernames/channel names.
+# Example:
+# TELEGRAM_SOURCE_CHANNELS=channel_one,channel_two
+TELEGRAM_SOURCE_CHANNELS = [
+    x.strip().lstrip("@")
+    for x in env(
+        "TELEGRAM_SOURCE_CHANNELS",
         "",
     ).split(",")
-    if item.strip()
+    if x.strip()
+]
+
+TELEGRAM_SEARCH_INTERVAL = env_int(
+    "TELEGRAM_SEARCH_INTERVAL",
+    60,
+)
+
+TELEGRAM_WEBHOOK_ENABLED = env_bool(
+    "TELEGRAM_WEBHOOK_ENABLED",
+    False,
+)
+
+TELEGRAM_SOURCE_CHAT_IDS = [
+    x.strip()
+    for x in env(
+        "TELEGRAM_SOURCE_CHAT_IDS",
+        "",
+    ).split(",")
+    if x.strip()
 ]
 
 
-# ============================================================
+# ============================================================================
+# TELEGRAM ALERT BOT
+# ============================================================================
+
+TELEGRAM_ALERTS_ENABLED = env_bool(
+    "TELEGRAM_ALERTS_ENABLED",
+    True,
+)
+
+TELEGRAM_BOT_TOKEN = env(
+    "TELEGRAM_BOT_TOKEN",
+)
+
+TELEGRAM_CHAT_ID = env(
+    "TELEGRAM_CHAT_ID",
+)
+
+TELEGRAM_ALERT_MIN_SCORE = env_int(
+    "TELEGRAM_ALERT_MIN_SCORE",
+    PRE_CA_ALERT_SCORE,
+)
+
+TELEGRAM_SEND_TIMEOUT = env_int(
+    "TELEGRAM_SEND_TIMEOUT",
+    15,
+)
+
+# Do not use getUpdates in this radar. This prevents the multiple-poller
+# 409 conflict that can happen when more than one process consumes updates.
+TELEGRAM_POLLING_ENABLED = False
+
+
+# ============================================================================
 # WEBSITE DISCOVERY
-# ============================================================
+# ============================================================================
 
-WEBSITE_DISCOVERY_ENABLED = (
-    os.getenv(
-        "WEBSITE_DISCOVERY_ENABLED",
-        "true"
-    ).lower()
-    in ("1", "true", "yes", "on")
+WEBSITE_DISCOVERY_ENABLED = env_bool(
+    "WEBSITE_DISCOVERY_ENABLED",
+    True,
 )
 
-WEBSITE_REQUEST_TIMEOUT = int(
-    os.getenv("WEBSITE_REQUEST_TIMEOUT", "15")
+WEBSITE_REQUEST_TIMEOUT = env_int(
+    "WEBSITE_REQUEST_TIMEOUT",
+    15,
 )
 
-WEBSITE_MAX_BYTES = int(
-    os.getenv("WEBSITE_MAX_BYTES", "500000")
+WEBSITE_MAX_BYTES = env_int(
+    "WEBSITE_MAX_BYTES",
+    2_000_000,
 )
 
-MAX_TEXT_LENGTH = int(
-    os.getenv("MAX_TEXT_LENGTH", "3000")
+WEBSITE_SCAN_INTERVAL = env_int(
+    "WEBSITE_SCAN_INTERVAL",
+    300,
 )
 
-# Keep article-to-project discovery bounded.
-MAX_PROJECT_LINKS_PER_ARTICLE = int(
-    os.getenv("MAX_PROJECT_LINKS_PER_ARTICLE", "2")
+# Only inspect these common project pages when discovered.
+WEBSITE_PATHS = [
+    "/",
+    "/whitepaper",
+    "/tokenomics",
+    "/roadmap",
+    "/docs",
+]
+
+
+# ============================================================================
+# RSS / PUBLIC FEEDS
+# ============================================================================
+
+RSS_ENABLED = env_bool(
+    "RSS_ENABLED",
+    True,
+)
+
+RSS_SCAN_INTERVAL = env_int(
+    "RSS_SCAN_INTERVAL",
+    300,
+)
+
+# Add feeds using:
+# RSS_FEEDS=https://example.com/feed.xml|https://example.org/rss
+RSS_FEEDS = [
+    url.strip()
+    for url in env(
+        "RSS_FEEDS",
+        "",
+    ).split("|")
+    if url.strip()
+]
+
+
+# ============================================================================
+# LAUNCHPAD / PRESALE DISCOVERY
+# ============================================================================
+
+LAUNCHPAD_DISCOVERY_ENABLED = env_bool(
+    "LAUNCHPAD_DISCOVERY_ENABLED",
+    True,
+)
+
+# These URLs are placeholders for configuration. scanner.py should implement
+# adapters only for sources that expose accessible public data/APIs.
+LAUNCHPAD_URLS = [
+    url.strip()
+    for url in env(
+        "LAUNCHPAD_URLS",
+        "",
+    ).split("|")
+    if url.strip()
+]
+
+
+# ============================================================================
+# MEMPOOL / PENDING DEPLOYMENT
+# ============================================================================
+
+# This is separate from pre-CA social discovery.
+#
+# A pending transaction may reveal a contract deployment before the
+# transaction is mined, but availability depends on the RPC/provider.
+MEMPOOL_ENABLED = env_bool(
+    "MEMPOOL_ENABLED",
+    False,
+)
+
+MEMPOOL_SCAN_INTERVAL = env_int(
+    "MEMPOOL_SCAN_INTERVAL",
+    5,
+)
+
+# Public BSC RPC endpoints generally should NOT be assumed to expose a
+# complete pending transaction stream. Use a provider that explicitly
+# supports pending transactions/WebSockets when enabling this.
+BSC_WS_URL = env(
+    "BSC_WS_URL",
 )
 
 
-# ============================================================
-# PRE-CA SIGNAL SCORING
-# ============================================================
+# ============================================================================
+# ON-CHAIN HANDOFF
+# ============================================================================
 
-# Minimum score before a discovered signal is stored.
-PRE_CA_MIN_SCORE = int(
-    os.getenv("PRE_CA_MIN_SCORE", "35")
+ONCHAIN_HANDOFF_ENABLED = env_bool(
+    "ONCHAIN_HANDOFF_ENABLED",
+    True,
 )
 
-# Score required before sending a Telegram alert.
-PRE_CA_ALERT_SCORE = int(
-    os.getenv("PRE_CA_ALERT_SCORE", "60")
+# Once a CA is found, scanner.py can hand the project to the on-chain
+# analyzer for security/liquidity/tax/holder checks.
+ONCHAIN_MIN_SCORE_FOR_DEEP_SCAN = env_int(
+    "ONCHAIN_MIN_SCORE_FOR_DEEP_SCAN",
+    60,
 )
 
 
-# ============================================================
-# SIGNAL KEYWORDS
-# ============================================================
+# ============================================================================
+# DEXSCREENER
+# ============================================================================
+
+DEXSCREENER_ENABLED = env_bool(
+    "DEXSCREENER_ENABLED",
+    True,
+)
+
+DEXSCREENER_BASE_URL = env(
+    "DEXSCREENER_BASE_URL",
+    "https://api.dexscreener.com",
+)
+
+DEXSCREENER_TOKEN_ENDPOINT = (
+    DEXSCREENER_BASE_URL.rstrip("/") +
+    "/tokens/v1/bsc/"
+)
+
+DEXSCREENER_REQUEST_TIMEOUT = env_int(
+    "DEXSCREENER_REQUEST_TIMEOUT",
+    15,
+)
+
+DEXSCREENER_INTERVAL = env_int(
+    "DEXSCREENER_INTERVAL",
+    60,
+)
+
+
+# ============================================================================
+# BSCSCAN / ETHERSCAN API V2
+# ============================================================================
+
+BSCSCAN_ENABLED = env_bool(
+    "BSCSCAN_ENABLED",
+    True,
+)
+
+BSCSCAN_API_KEY = env(
+    "BSCSCAN_API_KEY",
+)
+
+ETHERSCAN_V2_BASE_URL = env(
+    "ETHERSCAN_V2_BASE_URL",
+    "https://api.etherscan.io/v2/api",
+)
+
+ETHERSCAN_CHAIN_ID = 56
+
+BSCSCAN_REQUEST_TIMEOUT = env_int(
+    "BSCSCAN_REQUEST_TIMEOUT",
+    20,
+)
+
+BSCSCAN_INTERVAL = env_int(
+    "BSCSCAN_INTERVAL",
+    120,
+)
+
+
+# ============================================================================
+# SECURITY SCANNING
+# ============================================================================
+
+SECURITY_SCAN_ENABLED = env_bool(
+    "SECURITY_SCAN_ENABLED",
+    True,
+)
+
+# Function selectors used as HEURISTICS.
+#
+# These are not a substitute for source-code review, simulation, or a
+# professional audit.
+OWNER_SELECTOR = "0x8da5cb5b"
+
+BLACKLIST_SELECTORS = [
+    "443e5e04",
+    "5c60da1b",
+    "f9f92be4",
+]
+
+PAUSE_SELECTOR = "0x8456cb59"
+
+MINT_SELECTORS = [
+    "40c10f19",
+    "a0712d68",
+]
+
+ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
+
+
+# ============================================================================
+# HOLDER / CONCENTRATION ANALYSIS
+# ============================================================================
+
+HOLDER_ANALYSIS_ENABLED = env_bool(
+    "HOLDER_ANALYSIS_ENABLED",
+    True,
+)
+
+TOP_HOLDER_COUNT = env_int(
+    "TOP_HOLDER_COUNT",
+    10,
+)
+
+# Alert/review thresholds.
+TOP10_WARNING_PERCENT = env_float(
+    "TOP10_WARNING_PERCENT",
+    40.0,
+)
+
+TOP10_HIGH_RISK_PERCENT = env_float(
+    "TOP10_HIGH_RISK_PERCENT",
+    60.0,
+)
+
+
+# ============================================================================
+# LIQUIDITY / MARKET SIGNALS
+# ============================================================================
+
+LIQUIDITY_ANALYSIS_ENABLED = env_bool(
+    "LIQUIDITY_ANALYSIS_ENABLED",
+    True,
+)
+
+LIQUIDITY_STRONG_USD = env_float(
+    "LIQUIDITY_STRONG_USD",
+    50_000,
+)
+
+LIQUIDITY_GOOD_USD = env_float(
+    "LIQUIDITY_GOOD_USD",
+    10_000,
+)
+
+LIQUIDITY_LOW_USD = env_float(
+    "LIQUIDITY_LOW_USD",
+    5_000,
+)
+
+
+# ============================================================================
+# DEPLOYER REPUTATION
+# ============================================================================
+
+DEPLOYER_ANALYSIS_ENABLED = env_bool(
+    "DEPLOYER_ANALYSIS_ENABLED",
+    True,
+)
+
+DEPLOYER_HISTORY_LIMIT = env_int(
+    "DEPLOYER_HISTORY_LIMIT",
+    20,
+)
+
+# Number of contracts created by a deployer before we flag unusually high
+# deployment activity.
+DEPLOYER_HIGH_ACTIVITY = env_int(
+    "DEPLOYER_HIGH_ACTIVITY",
+    20,
+)
+
+
+# ============================================================================
+# TAX / HONEYPOT / TRADE SIMULATION
+# ============================================================================
+
+TRADE_SIMULATION_ENABLED = env_bool(
+    "TRADE_SIMULATION_ENABLED",
+    False,
+)
+
+# This will require a compatible simulation/RPC provider or execution
+# environment. It is deliberately disabled until scanner.py implements the
+# safe simulation adapter.
+HONEYPOT_CHECK_ENABLED = env_bool(
+    "HONEYPOT_CHECK_ENABLED",
+    False,
+)
+
+TAX_ANALYSIS_ENABLED = env_bool(
+    "TAX_ANALYSIS_ENABLED",
+    False,
+)
+
+
+# ============================================================================
+# DEDUPLICATION
+# ============================================================================
+
+DEDUP_ENABLED = env_bool(
+    "DEDUP_ENABLED",
+    True,
+)
+
+# A candidate can be merged using ticker, website domain, X handle,
+# Telegram URL, or project name depending on available evidence.
+DEDUP_WINDOW_SECONDS = env_int(
+    "DEDUP_WINDOW_SECONDS",
+    86_400,
+)
+
+
+# ============================================================================
+# RATE LIMIT / SAFETY CONTROLS
+# ============================================================================
+
+REQUEST_DELAY = env_float(
+    "REQUEST_DELAY",
+    0.25,
+)
+
+MAX_REQUESTS_PER_CYCLE = env_int(
+    "MAX_REQUESTS_PER_CYCLE",
+    100,
+)
+
+ERROR_BACKOFF_SECONDS = env_int(
+    "ERROR_BACKOFF_SECONDS",
+    30,
+)
+
+MAX_CONSECUTIVE_ERRORS = env_int(
+    "MAX_CONSECUTIVE_ERRORS",
+    10,
+)
+
+
+# ============================================================================
+# LOGGING
+# ============================================================================
+
+LOG_LEVEL = env(
+    "LOG_LEVEL",
+    "INFO",
+).upper()
+
+LOG_JSON = env_bool(
+    "LOG_JSON",
+    False,
+)
+
+
+# ============================================================================
+# DASHBOARD
+# ============================================================================
+
+DASHBOARD_ENABLED = env_bool(
+    "DASHBOARD_ENABLED",
+    True,
+)
+
+DASHBOARD_PAGE_SIZE = env_int(
+    "DASHBOARD_PAGE_SIZE",
+    50,
+)
+
+DASHBOARD_REFRESH_SECONDS = env_int(
+    "DASHBOARD_REFRESH_SECONDS",
+    15,
+)
+
+
+# ============================================================================
+# RENDER / PRODUCTION
+# ============================================================================
+
+RENDER_SERVICE_NAME = env(
+    "RENDER_SERVICE_NAME",
+    "bsc-radar-v3",
+)
+
+HEALTH_PATH = env(
+    "HEALTH_PATH",
+    "/health",
+)
+
+
+# ============================================================================
+# SOURCE PRIORITIES
+# ============================================================================
+
+# Higher number = more important.
+SOURCE_PRIORITY = {
+    "x": 100,
+    "telegram": 100,
+    "website": 80,
+    "launchpad": 75,
+    "rss": 60,
+    "mempool": 95,
+    "manual": 50,
+}
+
+
+# ============================================================================
+# PRE-CA KEYWORDS
+# ============================================================================
 
 BSC_KEYWORDS = [
     "bsc",
     "bnb chain",
     "bnbchain",
+    "bnb smart chain",
     "binance smart chain",
 ]
 
 LAUNCH_KEYWORDS = [
-    "launch",
-    "launching",
-    "launch soon",
     "launching soon",
-    "presale",
-    "pre-sale",
+    "launch soon",
+    "launching",
+    "launch date",
     "fair launch",
-    "fairlaunch",
     "stealth launch",
-    "contract soon",
+    "stealth",
+    "presale",
+    "presale soon",
+    "presale live",
+    "token launch",
+    "tge",
+    "ido",
+    "ico",
     "ca soon",
-    "contract address",
+    "contract soon",
     "contract address soon",
     "liquidity soon",
+    "liquidity will be added",
+    "lp will be added",
     "listing soon",
+    "dex launch",
+    "dex listing",
+]
+
+HIGH_SIGNAL_KEYWORDS = [
+    "ca soon",
+    "contract soon",
+    "contract address soon",
+    "launch date",
+    "launching soon",
+    "fair launch",
+    "stealth launch",
+    "liquidity soon",
+    "lp will be added",
+]
+
+NOISE_KEYWORDS = [
+    "casino",
+    "sports betting",
+    "adult",
+    "free money",
+    "guaranteed profit",
 ]
 
 
-# ============================================================
-# DATABASE
-# ============================================================
+# ============================================================================
+# VALIDATION
+# ============================================================================
 
-DB_PATH = os.getenv(
-    "DB_PATH",
-    "radar_v3.db"
-)
-
-
-# ============================================================
-# USER AGENT
-# ============================================================
-
-USER_AGENT = os.getenv(
-    "USER_AGENT",
-    "BSC-PreLaunch-Radar-V3/1.0"
-)
-
-
-# ============================================================
-# DEBUG
-# ============================================================
-
-DEBUG = (
-    os.getenv(
-        "DEBUG",
-        "false"
-    ).lower()
-    in ("1", "true", "yes", "on")
-)
-
-
-# ============================================================
-# CONFIGURATION SUMMARY
-# ============================================================
-
-def print_config():
+def validate_config() -> List[str]:
     """
-    Print safe configuration information.
+    Return configuration warnings/errors.
 
-    API keys/tokens are deliberately NOT printed.
+    scanner.py can call this during startup.
     """
+    issues: List[str] = []
 
-    print("=" * 60)
-    print("BSC PRE-LAUNCH RADAR V3")
-    print("=" * 60)
+    if not BSC_RPC_URLS:
+        issues.append("No BSC RPC URL configured.")
 
-    print(f"Scan interval: {SCAN_INTERVAL_SECONDS}s")
-    print(f"Max blocks/scan: {MAX_BLOCKS_PER_SCAN}")
-    print(f"First scan blocks: {FIRST_SCAN_BLOCKS}")
+    if SCAN_INTERVAL < 15:
+        issues.append(
+            "SCAN_INTERVAL is below 15 seconds; this may overload an RPC."
+        )
 
-    print(f"Telegram alerts: {TELEGRAM_ALERTS_ENABLED}")
-    print(f"X discovery: {X_ENABLED}")
-    print(f"RSS discovery: {RSS_ENABLED}")
-    print(
-        f"Website discovery: "
-        f"{WEBSITE_DISCOVERY_ENABLED}"
-    )
-    print(f"RSS feeds: {len(RSS_FEEDS)}")
-    print(f"Website seeds: {len(WEBSITE_SEEDS)}")
+    if MAX_BLOCKS < 1:
+        issues.append("MAX_BLOCKS must be at least 1.")
 
-    print(
-        f"Pre-CA minimum score: "
-        f"{PRE_CA_MIN_SCORE}"
-    )
+    if not 0 <= MIN_PRECA_SCORE <= 100:
+        issues.append("MIN_PRECA_SCORE must be between 0 and 100.")
 
-    print(
-        f"Pre-CA alert score: "
-        f"{PRE_CA_ALERT_SCORE}"
-    )
+    if not 0 <= PRE_CA_ALERT_SCORE <= 100:
+        issues.append("PRE_CA_ALERT_SCORE must be between 0 and 100.")
 
-    print(f"Database: {DB_PATH}")
+    if not 0 <= PRE_CA_HOT_SCORE <= 100:
+        issues.append("PRE_CA_HOT_SCORE must be between 0 and 100.")
 
-    print("=" * 60)
+    if PRE_CA_ALERT_SCORE > PRE_CA_HOT_SCORE:
+        issues.append(
+            "PRE_CA_ALERT_SCORE should not exceed PRE_CA_HOT_SCORE."
+        )
+
+    if X_ENABLED and not X_BEARER_TOKEN:
+        issues.append(
+            "X_ENABLED=true but X_BEARER_TOKEN is missing."
+        )
+
+    if TELEGRAM_ALERTS_ENABLED:
+        if not TELEGRAM_BOT_TOKEN:
+            issues.append(
+                "Telegram alerts enabled but TELEGRAM_BOT_TOKEN is missing."
+            )
+
+        if not TELEGRAM_CHAT_ID:
+            issues.append(
+                "Telegram alerts enabled but TELEGRAM_CHAT_ID is missing."
+            )
+
+    if TELEGRAM_DISCOVERY_ENABLED:
+        if TELEGRAM_WEBHOOK_ENABLED and not TELEGRAM_BOT_TOKEN:
+            issues.append(
+                "Telegram webhook discovery enabled but TELEGRAM_BOT_TOKEN is missing."
+            )
+        if not TELEGRAM_SOURCE_CHANNELS and not TELEGRAM_SOURCE_CHAT_IDS:
+            issues.append(
+                "Telegram discovery enabled but no source channels/chat IDs are configured."
+            )
+
+    if MEMPOOL_ENABLED and not BSC_WS_URL:
+        issues.append(
+            "MEMPOOL_ENABLED=true but BSC_WS_URL is missing."
+        )
+
+    return issues
+
+
+def print_config_summary() -> None:
+    """Safe startup summary. Secrets are never printed."""
+    print("=" * 70)
+    print(APP_NAME)
+    print("=" * 70)
+    print(f"Environment:              {APP_ENV}")
+    print(f"BSC RPCs configured:      {len(BSC_RPC_URLS)}")
+    print(f"Scan interval:            {SCAN_INTERVAL}s")
+    print(f"Max blocks/cycle:         {MAX_BLOCKS}")
+    print(f"Pre-CA discovery:         {PRE_CA_ENABLED}")
+    print(f"Broad discovery mode:      {BROAD_DISCOVERY_MODE}")
+    print(f"Minimum pre-CA score:     {MIN_PRECA_SCORE}")
+    print(f"Pre-CA alert score:       {PRE_CA_ALERT_SCORE}")
+    print(f"Pre-CA hot score:         {PRE_CA_HOT_SCORE}")
+    print(f"X discovery:              {X_ENABLED}")
+    print(f"Telegram discovery:       {TELEGRAM_DISCOVERY_ENABLED}")
+    print(f"Website discovery:        {WEBSITE_DISCOVERY_ENABLED}")
+    print(f"RSS discovery:            {RSS_ENABLED}")
+    print(f"Mempool monitoring:       {MEMPOOL_ENABLED}")
+    print(f"On-chain handoff:         {ONCHAIN_HANDOFF_ENABLED}")
+    print(f"Security scanning:        {SECURITY_SCAN_ENABLED}")
+    print(f"Holder analysis:          {HOLDER_ANALYSIS_ENABLED}")
+    print(f"Liquidity analysis:       {LIQUIDITY_ANALYSIS_ENABLED}")
+    print(f"Trade simulation:         {TRADE_SIMULATION_ENABLED}")
+    print(f"Dashboard:                {DASHBOARD_ENABLED}")
+    print("=" * 70)
 
 
 if __name__ == "__main__":
-    print_config()
+    print_config_summary()
+
+    problems = validate_config()
+
+    if problems:
+        print("\nConfiguration warnings:")
+        for problem in problems:
+            print(f"- {problem}")
+    else:
+        print("\nConfiguration validation: PASSED")

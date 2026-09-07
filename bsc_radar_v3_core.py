@@ -61,7 +61,7 @@ except Exception:
 # CONSTANTS
 # ============================================================
 
-DEFAULT_MIN_SCORE = 45
+DEFAULT_MIN_SCORE = 15
 DEFAULT_ALERT_SCORE = 60
 
 # A single public article is a lead, not confirmation.
@@ -1195,10 +1195,13 @@ def signal_to_candidate(
     )
 
     if not project_name:
-        return None
+        # Broad discovery: keep the lead even when the source does not
+        # expose a clean project name yet. The operator can inspect the
+        # original source and identify it manually.
+        project_name = f"BSC Lead {signal.signal_id[:8]}"
 
     if is_generic_project_name(project_name):
-        return None
+        project_name = f"BSC Lead {signal.signal_id[:8]}"
 
     # --------------------------------------------------------
     # Social links
@@ -1474,9 +1477,11 @@ class PreCARadar:
 
                 min_score = DEFAULT_MIN_SCORE
 
-        self.min_score = int(
-            min_score
-        )
+        # Broad mode intentionally lowers the admission floor.
+        broad_mode = bool(getattr(config, "BROAD_DISCOVERY_MODE", True)) if config else True
+        if broad_mode:
+            min_score = min(15, int(min_score))
+        self.min_score = int(min_score)
 
         self.signals: Dict[
             str,
@@ -1545,11 +1550,11 @@ class PreCARadar:
         )
 
         # ----------------------------------------------------
-        # Weak signal filter
+        # Discovery floor
         # ----------------------------------------------------
-
+        # Broad mode intentionally does not require launch language.
+        # BSC/BNB Chain evidence is enough to create a lead.
         if signal.score < self.min_score:
-
             return None
 
         # ----------------------------------------------------
