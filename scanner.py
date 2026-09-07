@@ -695,6 +695,16 @@ def discover_project_links_from_article(article_url: str) -> List[str]:
     return found
 
 
+def extract_html_title(html: str) -> str:
+    """Extract a concise HTML <title> for website evidence."""
+    if not html:
+        return ""
+    match = re.search(r"<title[^>]*>(.*?)</title>", html, flags=re.IGNORECASE | re.DOTALL)
+    if not match:
+        return ""
+    title = unescape(re.sub(r"\s+", " ", match.group(1))).strip()
+    return title[:300]
+
 def inspect_website(
     url: str,
     context_text: str = "",
