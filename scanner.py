@@ -84,6 +84,9 @@ last_scanned_block: Optional[int] = None
 last_x_search_at = 0.0
 telegram_webhook_registered = False
 
+# Cache live DEX verification so broad discovery does not hammer the public API.
+dex_verify_cache: Dict[str, Dict[str, Any]] = {}
+
 http_session = requests.Session()
 
 http_session.headers.update({
@@ -290,9 +293,14 @@ def process_x_post(
     metrics = tweet.get("public_metrics") or {}
     author_metrics = author.get("public_metrics") or {}
 
-    # Pre-CA means we should not promote posts that explicitly publish a
-    # BSC contract address. Ignore posts with a clear contract/CA assignment.
-    if re.search(r"(?:ca|contract(?: address)?)\s*[:=]\s*0x[a-fA-F0-9]{40}\b", text, re.I):
+    # Pre-CA means we should not promote posts that publish a contract address.
+    # Catch both labelled CAs and bare 0x addresses.
+    if contains_explicit_contract_address(text):
+        return None
+
+    # Strong post-launch language is also excluded even when the CA is not
+    # repeated in the post.
+    if contains_post_launch_language(text):
         return None
 
     urls = extract_urls(text)
@@ -437,9 +445,8 @@ def handle_telegram_update(update: Dict[str, Any]) -> int:
     if not text:
         return 0
 
-    # Reject explicit published CAs. This keeps Telegram useful for genuine
-    # pre-launch announcements instead of post-launch calls.
-    if re.search(r"(?:ca|contract(?: address)?)\s*[:=]\s*0x[a-fA-F0-9]{40}\b", text, re.I):
+    # Reject explicit published CAs and obvious post-launch announcements.
+    if contains_explicit_contract_address(text) or contains_post_launch_language(text):
         return 0
 
     username = str(chat.get("username") or "").lstrip("@")
@@ -722,11 +729,228 @@ def normalize_date(value: str) -> str:
         return value
 
 
+# ============================================================================
+# LIVE MARKET / PRE-LAUNCH VERIFICATION
+# ============================================================================
+
+POST_LAUNCH_PHRASES = (
+    "trading now",
+    "trading live",
+    "now trading",
+    "live trading",
+    "token is live",
+    "token live",
+    "coin is live",
+    "coin live",
+    "launched today",
+    "launched now",
+    "already launched",
+    "launch complete",
+    "listed on",
+    "listing is live",
+    "liquidity added",
+    "liquidity is live",
+    "pair is live",
+    "buy now",
+    "chart is live",
+    "dexscreener",
+)
+
+
+def contains_explicit_contract_address(text: str) -> bool:
+    """Reject any post containing a 40-hex-character EVM contract address."""
+    return bool(re.search(r"\b0x[a-fA-F0-9]{40}\b", text or ""))
+
+
+def contains_post_launch_language(text: str) -> bool:
+    lowered = (text or "").lower()
+    return any(phrase in lowered for phrase in POST_LAUNCH_PHRASES)
+
+
+def _normalise_host(value: str) -> str:
+    try:
+        host = get_domain(value) if value else ""
+        return host.lower().lstrip("www.")
+    except Exception:
+        return ""
+
+
+def _pair_socials(pair: Dict[str, Any]) -> List[str]:
+    values: List[str] = []
+    info = pair.get("info") or {}
+    for item in info.get("websites") or []:
+        if item.get("url"):
+            values.append(str(item["url"]))
+    for item in info.get("socials") or []:
+        if item.get("url"):
+            values.append(str(item["url"]))
+    return values
+
+
+def _pair_matches_candidate(candidate: ProjectCandidate, pair: Dict[str, Any]) -> bool:
+    if str(pair.get("chainId", "")).lower() != "bsc":
+        return False
+
+    base = pair.get("baseToken") or {}
+    pair_name = clean_text(base.get("name", ""))
+    pair_symbol = clean_text(base.get("symbol", "")).upper()
+    cand_name = clean_text(candidate.project_name)
+    cand_symbol = clean_text(candidate.ticker).upper().lstrip("$")
+
+    if not pair.get("pairAddress") or not base.get("address"):
+        return False
+
+    cand_site = _normalise_host(candidate.website)
+    pair_hosts = {_normalise_host(x) for x in _pair_socials(pair)}
+    if cand_site and cand_site in pair_hosts:
+        return True
+
+    author = clean_text(candidate.author).lower().lstrip("@")
+    for url in _pair_socials(pair):
+        if "x.com/" in url.lower() or "twitter.com/" in url.lower():
+            handle = url.rstrip("/").split("/")[-1].lower().lstrip("@")
+            if author and handle == author:
+                return True
+            if candidate.x_handle and handle == candidate.x_handle.lower().lstrip("@"):
+                return True
+
+    name_l = pair_name.lower()
+    cand_name_l = cand_name.lower()
+
+    # Exact symbol plus a meaningful name match is strong evidence. For a
+    # ticker-only lead, exact symbol is accepted only when the DEX result has
+    # real liquidity/volume, reducing false positives from obscure tokens.
+    symbol_match = bool(cand_symbol and pair_symbol == cand_symbol)
+    name_match = bool(
+        cand_name_l
+        and cand_name_l != cand_symbol.lower()
+        and (
+            cand_name_l == name_l
+            or cand_name_l in name_l
+            or name_l in cand_name_l
+        )
+    )
+
+    if symbol_match and name_match:
+        return True
+
+    if cand_name_l and cand_name_l != cand_symbol.lower() and cand_name_l == name_l:
+        return True
+
+    if symbol_match and cand_name_l == cand_symbol.lower():
+        liquidity = ((pair.get("liquidity") or {}).get("usd") or 0) or 0
+        volume = ((pair.get("volume") or {}).get("h24") or 0) or 0
+        try:
+            return float(liquidity) > 0 or float(volume) > 0
+        except (TypeError, ValueError):
+            return False
+
+    return False
+
+
+def verify_live_bsc_market(candidate: ProjectCandidate) -> Dict[str, Any]:
+    """Check DexScreener for an already-trading BSC market matching the lead."""
+    if not getattr(config, "DEXSCREENER_VERIFY_ENABLED", True):
+        return {"deployed": False, "reason": "disabled"}
+
+    key = (candidate.ticker or candidate.project_name or "").strip().lower()
+    if not key:
+        return {"deployed": False, "reason": "no_identity"}
+
+    now = time.time()
+    cached = dex_verify_cache.get(key)
+    interval = max(60, int(getattr(config, "DEXSCREENER_VERIFY_INTERVAL", 600)))
+    if cached and now - cached.get("checked_at", 0) < interval:
+        return cached
+
+    queries: List[str] = []
+    ticker = clean_text(candidate.ticker).lstrip("$")
+    name = clean_text(candidate.project_name)
+    if ticker and ticker.lower() not in {"bsc", "bnb", "chain", "token", "coin"}:
+        queries.append(ticker)
+    if name and not name.lower().startswith("bsc lead") and name not in queries:
+        queries.append(name)
+
+    result: Dict[str, Any] = {"deployed": False, "checked_at": now}
+    for query in queries[:2]:
+        try:
+            response = http_get(
+                getattr(config, "DEXSCREENER_API_URL", "https://api.dexscreener.com/latest/dex/search"),
+                params={"q": query},
+                timeout=getattr(config, "DEXSCREENER_REQUEST_TIMEOUT", 10),
+            )
+            if response is None or response.status_code != 200:
+                continue
+            data = response.json()
+            pairs = data.get("pairs") or []
+            matches = [p for p in pairs if _pair_matches_candidate(candidate, p)]
+            if not matches:
+                continue
+            matches.sort(
+                key=lambda p: (
+                    float(((p.get("liquidity") or {}).get("usd") or 0) or 0),
+                    float(((p.get("volume") or {}).get("h24") or 0) or 0),
+                ),
+                reverse=True,
+            )
+            pair = matches[0]
+            result = {
+                "deployed": True,
+                "checked_at": now,
+                "contract_address": (pair.get("baseToken") or {}).get("address", ""),
+                "pair_address": pair.get("pairAddress", ""),
+                "pair_url": pair.get("url", ""),
+                "liquidity_usd": ((pair.get("liquidity") or {}).get("usd") or 0),
+                "volume_24h": ((pair.get("volume") or {}).get("h24") or 0),
+            }
+            break
+        except Exception as exc:
+            log.debug("DexScreener verification failed for %s: %s", query, exc)
+
+    dex_verify_cache[key] = result
+    return result
+
+
 def handle_candidate_signal(
     signal: PreCASignal,
 ) -> Optional[ProjectCandidate]:
     candidate = handle_signal(signal)
     if candidate is None:
+        return None
+
+    # Live-market gate: a broad discovery lead is useful only while it is
+    # still pre-launch. If a matching BSC pair is already trading, mark the
+    # candidate as deployed and do not keep it in the pre-launch table.
+    verification = verify_live_bsc_market(candidate)
+    if verification.get("deployed"):
+        candidate.contract_address = verification.get("contract_address", "")
+        candidate.raw["live_market"] = verification
+        log.info(
+            "Pre-CA rejected as already trading | project=%s symbol=%s ca=%s",
+            candidate.project_name,
+            candidate.ticker,
+            candidate.contract_address or "unknown",
+        )
+        # Persist the deployed status so the dashboard can hide it on the
+        # next render, while preventing any Telegram pre-launch alert.
+        try:
+            upsert_prelaunch({
+                "name": candidate.project_name,
+                "symbol": candidate.ticker or candidate.project_name,
+                "website": candidate.website,
+                "x_url": candidate.x_handle,
+                "telegram_url": candidate.telegram_url,
+                "score": candidate.score,
+                "stage": "DEPLOYED",
+                "source": candidate.source,
+                "signal_count": candidate.signal_count,
+                "contract_address": candidate.contract_address,
+                "network": candidate.network,
+                "source_types": ",".join(candidate.source_types or []),
+                "confidence": candidate.confidence or candidate.score,
+            })
+        except Exception:
+            log.exception("Failed to persist deployed candidate status")
         return None
 
     try:
@@ -740,7 +964,7 @@ def handle_candidate_signal(
             "stage": candidate.stage,
             "source": candidate.source,
             "signal_count": candidate.signal_count,
-            "contract_address": candidate.contract_address,
+            "contract_address": "",
             "network": candidate.network,
             "source_types": ",".join(candidate.source_types or []),
             "confidence": candidate.confidence or candidate.score,
@@ -1003,6 +1227,8 @@ def run() -> None:
     log.info("==============================================")
     log.info("BSC RADAR V3 STARTING")
     log.info("Pre-CA intelligence mode enabled")
+    log.info("Broad discovery mode: %s", getattr(config, "BROAD_DISCOVERY_MODE", True))
+    log.info("Live DEX verification: %s", getattr(config, "DEXSCREENER_VERIFY_ENABLED", True))
     log.info("X discovery enabled: %s", getattr(config, "X_ENABLED", False))
     log.info("Telegram webhook discovery: %s", getattr(config, "TELEGRAM_WEBHOOK_ENABLED", False))
     log.info("Telegram sources configured: %s", len(getattr(config, "TELEGRAM_SOURCE_CHANNELS", [])) + len(getattr(config, "TELEGRAM_SOURCE_CHAT_IDS", [])))

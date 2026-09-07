@@ -174,6 +174,28 @@ ALERT_SCORE_INCREASE = env_int(
     10,
 )
 
+# Verify discovered candidates against live DEX listings before they are
+# kept as pre-launch leads. This removes projects that are already trading.
+DEXSCREENER_VERIFY_ENABLED = env_bool(
+    "DEXSCREENER_VERIFY_ENABLED",
+    True,
+)
+
+DEXSCREENER_VERIFY_INTERVAL = env_int(
+    "DEXSCREENER_VERIFY_INTERVAL",
+    600,
+)
+
+DEXSCREENER_API_URL = env(
+    "DEXSCREENER_API_URL",
+    "https://api.dexscreener.com/latest/dex/search",
+)
+
+DEXSCREENER_REQUEST_TIMEOUT = env_int(
+    "DEXSCREENER_REQUEST_TIMEOUT",
+    10,
+)
+
 
 # ============================================================================
 # PRE-CA SCORING WEIGHTS

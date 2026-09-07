@@ -45,6 +45,13 @@ async def telegram_webhook(request: Request):
 @app.get("/", response_class=HTMLResponse)
 def dashboard():
     projects = all_prelaunch()
+    # Only show genuine pre-launch rows. Deployed/trading candidates are
+    # retained in SQLite for traceability but removed from the radar view.
+    projects = [
+        project for project in projects
+        if not project.get("contract_address")
+        and (project.get("stage") or "").upper() != "DEPLOYED"
+    ]
     rows = ""
 
     for project in projects:
@@ -78,7 +85,7 @@ def dashboard():
             <td>{evidence}</td>
             <td>{source}</td>
             <td>{" · ".join(links) if links else "-"}</td>
-            <td>NOT DEPLOYED</td>
+            <td>VERIFIED PRE-CA</td>
         </tr>
         """
 
