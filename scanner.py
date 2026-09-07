@@ -641,7 +641,16 @@ def is_probable_project_website(url: str) -> bool:
         "googlesyndication.com", "doubleclick.net", "gstatic.com",
         "googleapis.com", "googleusercontent.com",
     }
-    return host not in blocked
+    blocked_suffixes = (
+        ".googleusercontent.com",
+        ".googleapis.com",
+        ".gstatic.com",
+        ".google-analytics.com",
+        ".googletagmanager.com",
+        ".googlesyndication.com",
+        ".doubleclick.net",
+    )
+    return host not in blocked and not host.endswith(blocked_suffixes)
 
 
 # ============================================================================
@@ -747,8 +756,13 @@ def inspect_website(
         part for part in (context_text, text) if part
     )
 
+    # A project website reached through an RSS article is derived from that
+    # RSS evidence and must not count as an independent source family.
+    source_family = "rss" if context_text else "website"
+
     signal = PreCASignal(
         source_type="website",
+        source_family=source_family,
         source_name=get_domain(url) or "Website",
         text=combined_text[:config.MAX_TEXT_LENGTH],
         url=url,
@@ -757,6 +771,7 @@ def inspect_website(
             "title": extract_html_title(html),
             "source_url": url,
             "project_link_discovered": bool(context_text),
+            "source_family": source_family,
         },
     )
 

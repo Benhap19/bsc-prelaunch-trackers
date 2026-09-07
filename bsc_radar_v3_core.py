@@ -203,6 +203,11 @@ class PreCASignal:
 
     signal_id: str = ""
 
+    # Evidence family used for independence checks.
+    # Examples: rss, website, x, telegram. A website discovered from an RSS
+    # article should keep the rss family because it is not independent evidence.
+    source_family: str = ""
+
     def __post_init__(self) -> None:
         if not self.observed_at:
             self.observed_at = utc_now()
@@ -261,6 +266,11 @@ class ProjectCandidate:
     # Distinct evidence channels supporting this candidate.
     source_types: List[str] = field(default_factory=list)
     confidence: int = 0
+
+    # Distinct independent evidence families supporting this candidate.
+    # Kept separate from raw source_type so derived website links do not
+    # masquerade as an independent website source.
+    source_families: List[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not self.first_seen:
@@ -358,6 +368,25 @@ def get_domain(url: str) -> str:
 
     except Exception:
         return ""
+
+
+BLOCKED_INFRA_HOSTS = {
+    "google.com", "google-analytics.com", "googletagmanager.com",
+    "googlesyndication.com", "doubleclick.net", "gstatic.com",
+    "googleapis.com", "googleusercontent.com",
+}
+
+
+def is_blocked_infrastructure_url(url: str) -> bool:
+    try:
+        host = get_domain(url) if url else ""
+    except Exception:
+        host = ""
+    return bool(
+        host
+        and (host in BLOCKED_INFRA_HOSTS
+             or any(host.endswith("." + base) for base in BLOCKED_INFRA_HOSTS))
+    )
 
 
 def normalize_url(url: str) -> str:
@@ -1184,6 +1213,9 @@ def signal_to_candidate(
         or links.get("website", "")
     )
 
+    if is_blocked_infrastructure_url(website):
+        website = ""
+
     telegram_url = (
         links.get("telegram", "")
     )
@@ -1281,7 +1313,8 @@ def signal_to_candidate(
             "url": signal.url,
             "text": text,
         },
-        source_types=[signal.source_type.lower()],
+        source_types=[(signal.source_family or signal.source_type).lower()],
+        source_families=[(signal.source_family or signal.source_type).lower()],
         confidence=score,
     )
 
@@ -1319,9 +1352,17 @@ def merge_candidates(
         *(incoming.source_types or []),
     })
 
+    # Use evidence families for independence. A website discovered through an
+    # RSS article remains RSS evidence until independently discovered.
+    existing.source_families = sorted({
+        *(existing.source_families or existing.source_types or []),
+        *(incoming.source_families or incoming.source_types or []),
+    })
+
     # Independent source diversity raises confidence and unlocks the
     # underlying evidence strength. Repeated polling does not.
-    diversity_bonus = min(15, max(0, len(existing.source_types) - 1) * 7)
+    independent_sources = len(existing.source_families or existing.source_types or [])
+    diversity_bonus = min(15, max(0, independent_sources - 1) * 7)
     evidence_strength = max(
         existing.score,
         existing.confidence,
@@ -1330,9 +1371,9 @@ def merge_candidates(
     )
     existing.confidence = min(100, evidence_strength + diversity_bonus)
 
-    if len(existing.source_types) < 2:
+    if independent_sources < 2:
         existing.score = min(existing.score, SINGLE_SOURCE_SCORE_CAP)
-    elif len(existing.source_types) < 3:
+    elif independent_sources < 3:
         # Two sources can reach WATCH/HIGH POTENTIAL, but not HOT.
         existing.score = min(79, evidence_strength + diversity_bonus)
     else:
