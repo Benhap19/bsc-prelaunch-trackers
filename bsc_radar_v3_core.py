@@ -103,6 +103,24 @@ BSC_KEYWORDS = [
     "binance chain",
 ]
 
+BASE_KEYWORDS = [
+    "base chain",
+    "base network",
+    "base l2",
+    "on base",
+    "built on base",
+]
+
+SOLANA_KEYWORDS = [
+    "solana",
+    "sol chain",
+    "on sol",
+    "built on solana",
+    "solana chain",
+]
+
+SUPPORTED_NETWORKS = ("BSC", "BASE", "SOLANA")
+
 LAUNCH_KEYWORDS = [
     "launch",
     "launching",
@@ -199,7 +217,7 @@ class PreCASignal:
     project_name: str = ""
     ticker: str = ""
 
-    network: str = "BSC"
+    network: str = ""
 
     signal_id: str = ""
 
@@ -236,7 +254,7 @@ class ProjectCandidate:
 
     ticker: str = ""
 
-    network: str = "BSC"
+    network: str = ""
 
     website: str = ""
     telegram_url: str = ""
@@ -693,17 +711,15 @@ def detect_bsc(text: str) -> bool:
 
 
 def detect_network(text: str) -> str:
-    """
-    Return the most likely network.
-
-    This radar is focused on BSC, so unknown signals
-    are not automatically treated as BSC.
-    """
-
+    """Return the most likely supported launch network."""
+    matches = []
     if detect_bsc(text):
-        return "BSC"
-
-    return ""
+        matches.append("BSC")
+    if contains_any(text, BASE_KEYWORDS):
+        matches.append("BASE")
+    if contains_any(text, SOLANA_KEYWORDS):
+        matches.append("SOLANA")
+    return matches[0] if len(matches) == 1 else (matches[0] if matches else "")
 
 
 # ============================================================
@@ -757,14 +773,14 @@ def score_pre_ca_signal(signal: PreCASignal) -> int:
     score = 0
 
     # --------------------------------------------------------
-    # BSC / BNB Chain
+    # Supported network evidence
     # --------------------------------------------------------
 
-    if contains_any(text, BSC_KEYWORDS):
+    if signal.network == "BSC" or contains_any(text, BSC_KEYWORDS):
         score += 25
-    elif (signal.raw or {}).get("feed_context") == "BSC / BNB Chain":
-        # A chain-specific public feed is valid network evidence even
-        # when the individual headline omits the chain name.
+    elif signal.network == "BASE" or contains_any(text, BASE_KEYWORDS):
+        score += 25
+    elif signal.network == "SOLANA" or contains_any(text, SOLANA_KEYWORDS):
         score += 25
 
     # --------------------------------------------------------
@@ -1198,10 +1214,10 @@ def signal_to_candidate(
         # Broad discovery: keep the lead even when the source does not
         # expose a clean project name yet. The operator can inspect the
         # original source and identify it manually.
-        project_name = f"BSC Lead {signal.signal_id[:8]}"
+        project_name = f"{signal.network or 'Crypto'} Lead {signal.signal_id[:8]}"
 
     if is_generic_project_name(project_name):
-        project_name = f"BSC Lead {signal.signal_id[:8]}"
+        project_name = f"{signal.network or 'Crypto'} Lead {signal.signal_id[:8]}"
 
     # --------------------------------------------------------
     # Social links
@@ -1518,8 +1534,7 @@ class PreCARadar:
                 signal.text
             )
 
-        if signal.network != "BSC":
-
+        if signal.network not in SUPPORTED_NETWORKS:
             return None
 
         # ----------------------------------------------------

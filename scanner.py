@@ -52,6 +52,8 @@ from bsc_radar_v3_core import (
     normalize_url,
     extract_tickers,
     utc_now,
+    clean_text,
+    detect_network,
 )
 
 from db import init_db, upsert_prelaunch
@@ -214,7 +216,7 @@ def send_telegram_message(text: str) -> bool:
 # ============================================================================
 
 def search_x() -> int:
-    """Search recent X posts for high-intent BSC pre-launch signals."""
+    """Search recent X posts for supported-chain pre-launch signals."""
     global last_x_search_at
 
     if not config.X_ENABLED:
@@ -335,7 +337,7 @@ def process_x_post(
         website_url=website,
         project_name=hashtags[0] if hashtags else "",
         ticker=tickers[0] if tickers else "",
-        network="BSC",
+        network=detect_network(text),
         raw={
             "public_metrics": metrics,
             "author_metrics": author_metrics,
@@ -463,7 +465,7 @@ def handle_telegram_update(update: Dict[str, Any]) -> int:
             f"https://t.me/{username}/{message_id}"
             if username and message_id else ""
         ),
-        network="BSC",
+        network=detect_network(text),
         observed_at=utc_now(),
         raw={
             "chat_id": chat_id,
@@ -588,7 +590,7 @@ def search_rss_feeds() -> int:
 
 
 def rss_bsc_context(feed_url: str) -> str:
-    """Return trusted network context encoded by a BSC/BNB-focused feed URL."""
+    """Return trusted supported-chain context encoded by a feed URL."""
     value = (feed_url or "").lower()
     if any(token in value for token in (
         "rssfeeds-bnb",
@@ -788,7 +790,8 @@ def _pair_socials(pair: Dict[str, Any]) -> List[str]:
 
 
 def _pair_matches_candidate(candidate: ProjectCandidate, pair: Dict[str, Any]) -> bool:
-    if str(pair.get("chainId", "")).lower() != "bsc":
+    expected = {"BSC": "bsc", "BASE": "base", "SOLANA": "solana"}.get(candidate.network)
+    if not expected or str(pair.get("chainId", "")).lower() != expected:
         return False
 
     base = pair.get("baseToken") or {}
@@ -816,27 +819,16 @@ def _pair_matches_candidate(candidate: ProjectCandidate, pair: Dict[str, Any]) -
 
     name_l = pair_name.lower()
     cand_name_l = cand_name.lower()
-
-    # Exact symbol plus a meaningful name match is strong evidence. For a
-    # ticker-only lead, exact symbol is accepted only when the DEX result has
-    # real liquidity/volume, reducing false positives from obscure tokens.
     symbol_match = bool(cand_symbol and pair_symbol == cand_symbol)
     name_match = bool(
         cand_name_l
         and cand_name_l != cand_symbol.lower()
-        and (
-            cand_name_l == name_l
-            or cand_name_l in name_l
-            or name_l in cand_name_l
-        )
+        and (cand_name_l == name_l or cand_name_l in name_l or name_l in cand_name_l)
     )
-
     if symbol_match and name_match:
         return True
-
     if cand_name_l and cand_name_l != cand_symbol.lower() and cand_name_l == name_l:
         return True
-
     if symbol_match and cand_name_l == cand_symbol.lower():
         liquidity = ((pair.get("liquidity") or {}).get("usd") or 0) or 0
         volume = ((pair.get("volume") or {}).get("h24") or 0) or 0
@@ -844,72 +836,51 @@ def _pair_matches_candidate(candidate: ProjectCandidate, pair: Dict[str, Any]) -
             return float(liquidity) > 0 or float(volume) > 0
         except (TypeError, ValueError):
             return False
-
     return False
 
 
-def verify_live_bsc_market(candidate: ProjectCandidate) -> Dict[str, Any]:
-    """Check DexScreener for an already-trading BSC market matching the lead."""
+def verify_live_market(candidate: ProjectCandidate) -> Dict[str, Any]:
+    """Check DexScreener for an already-trading market on the candidate chain."""
     if not getattr(config, "DEXSCREENER_VERIFY_ENABLED", True):
         return {"deployed": False, "reason": "disabled"}
-
-    key = (candidate.ticker or candidate.project_name or "").strip().lower()
-    if not key:
+    key = f"{candidate.network}:{(candidate.ticker or candidate.project_name or '').strip().lower()}"
+    if not key or key.endswith(":"):
         return {"deployed": False, "reason": "no_identity"}
-
     now = time.time()
     cached = dex_verify_cache.get(key)
     interval = max(60, int(getattr(config, "DEXSCREENER_VERIFY_INTERVAL", 600)))
     if cached and now - cached.get("checked_at", 0) < interval:
         return cached
-
     queries: List[str] = []
     ticker = clean_text(candidate.ticker).lstrip("$")
     name = clean_text(candidate.project_name)
-    if ticker and ticker.lower() not in {"bsc", "bnb", "chain", "token", "coin"}:
+    if ticker and ticker.lower() not in {"bsc", "bnb", "base", "solana", "chain", "token", "coin"}:
         queries.append(ticker)
-    if name and not name.lower().startswith("bsc lead") and name not in queries:
+    if name and "lead" not in name.lower() and name not in queries:
         queries.append(name)
-
     result: Dict[str, Any] = {"deployed": False, "checked_at": now}
     for query in queries[:2]:
         try:
-            response = http_get(
-                getattr(config, "DEXSCREENER_API_URL", "https://api.dexscreener.com/latest/dex/search"),
-                params={"q": query},
-                timeout=getattr(config, "DEXSCREENER_REQUEST_TIMEOUT", 10),
-            )
+            response = http_get(getattr(config, "DEXSCREENER_API_URL", "https://api.dexscreener.com/latest/dex/search"), params={"q": query}, timeout=getattr(config, "DEXSCREENER_REQUEST_TIMEOUT", 10))
             if response is None or response.status_code != 200:
                 continue
-            data = response.json()
-            pairs = data.get("pairs") or []
+            pairs = response.json().get("pairs") or []
             matches = [p for p in pairs if _pair_matches_candidate(candidate, p)]
             if not matches:
                 continue
-            matches.sort(
-                key=lambda p: (
-                    float(((p.get("liquidity") or {}).get("usd") or 0) or 0),
-                    float(((p.get("volume") or {}).get("h24") or 0) or 0),
-                ),
-                reverse=True,
-            )
+            matches.sort(key=lambda p: (float(((p.get("liquidity") or {}).get("usd") or 0) or 0), float(((p.get("volume") or {}).get("h24") or 0) or 0)), reverse=True)
             pair = matches[0]
-            result = {
-                "deployed": True,
-                "checked_at": now,
-                "contract_address": (pair.get("baseToken") or {}).get("address", ""),
-                "pair_address": pair.get("pairAddress", ""),
-                "pair_url": pair.get("url", ""),
-                "liquidity_usd": ((pair.get("liquidity") or {}).get("usd") or 0),
-                "volume_24h": ((pair.get("volume") or {}).get("h24") or 0),
-            }
+            result = {"deployed": True, "checked_at": now, "contract_address": (pair.get("baseToken") or {}).get("address", ""), "pair_address": pair.get("pairAddress", ""), "pair_url": pair.get("url", ""), "liquidity_usd": ((pair.get("liquidity") or {}).get("usd") or 0), "volume_24h": ((pair.get("volume") or {}).get("h24") or 0)}
             break
         except Exception as exc:
-            log.debug("DexScreener verification failed for %s: %s", query, exc)
-
+            log.debug("DexScreener verification failed for %s/%s: %s", candidate.network, query, exc)
     dex_verify_cache[key] = result
     return result
 
+
+def verify_live_bsc_market(candidate: ProjectCandidate) -> Dict[str, Any]:
+    """Backward-compatible alias for the generalized market verifier."""
+    return verify_live_market(candidate)
 
 def handle_candidate_signal(
     signal: PreCASignal,
@@ -921,7 +892,7 @@ def handle_candidate_signal(
     # Live-market gate: a broad discovery lead is useful only while it is
     # still pre-launch. If a matching BSC pair is already trading, mark the
     # candidate as deployed and do not keep it in the pre-launch table.
-    verification = verify_live_bsc_market(candidate)
+    verification = verify_live_market(candidate)
     if verification.get("deployed"):
         candidate.contract_address = verification.get("contract_address", "")
         candidate.raw["live_market"] = verification
@@ -936,7 +907,7 @@ def handle_candidate_signal(
         try:
             upsert_prelaunch({
                 "name": candidate.project_name,
-                "symbol": candidate.ticker or candidate.project_name,
+                "symbol": f"{candidate.network}:{candidate.ticker or candidate.project_name}",
                 "website": candidate.website,
                 "x_url": candidate.x_handle,
                 "telegram_url": candidate.telegram_url,
@@ -956,7 +927,7 @@ def handle_candidate_signal(
     try:
         upsert_prelaunch({
             "name": candidate.project_name,
-            "symbol": candidate.ticker or candidate.project_name,
+            "symbol": f"{candidate.network}:{candidate.ticker or candidate.project_name}",
             "website": candidate.website,
             "x_url": candidate.x_handle,
             "telegram_url": candidate.telegram_url,

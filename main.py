@@ -9,8 +9,8 @@ from scanner import handle_telegram_update, run, _telegram_secret
 
 
 app = FastAPI(
-    title="BSC Pre-Launch Radar",
-    description="BSC pre-launch discovery and scoring system",
+    title="Multi-Chain Pre-Launch Radar",
+    description="BSC, Base and Solana pre-launch discovery and scoring system",
 )
 
 init_db()
@@ -57,6 +57,9 @@ def dashboard():
     for project in projects:
         name = html.escape(project.get("name") or "Unknown BSC Project")
         symbol = html.escape(project.get("symbol") or "-")
+        if symbol.startswith("BSC:") or symbol.startswith("BASE:") or symbol.startswith("SOLANA:"):
+            symbol = html.escape(symbol.split(":", 1)[1])
+        network = html.escape(project.get("network") or "-")
         stage = html.escape(project.get("stage") or "EARLY")
         score = int(project.get("prelaunch_score") or 0)
         website = html.escape(project.get("website") or "")
@@ -78,6 +81,7 @@ def dashboard():
         rows += f"""
         <tr>
             <td><strong>{name}</strong><br><small>${symbol}</small></td>
+            <td>{network}</td>
             <td>{stage}</td>
             <td><strong>{score}/100</strong></td>
             <td>{confidence}/100</td>
@@ -90,7 +94,7 @@ def dashboard():
         """
 
     if not rows:
-        rows = '<tr><td colspan="9" class="empty">No qualifying pre-CA projects discovered yet.</td></tr>'
+        rows = '<tr><td colspan="10" class="empty">No qualifying pre-CA projects discovered yet.</td></tr>'
 
     return f"""
 <!doctype html>
@@ -117,15 +121,15 @@ small{{color:#666}}
 <body>
 <div class="container">
 <div class="card">
-<h1>🚀 BSC Pre-Launch Radar</h1>
-<p>Automated discovery of potential BSC projects before contract deployment.</p>
+<h1>🚀 Multi-Chain Pre-Launch Radar</h1>
+<p>Automated discovery of potential BSC, Base and Solana projects before contract deployment.</p>
 <p><span class="badge">Pre-CA intelligence</span></p>
 <h2>{len(projects)} project(s) tracked</h2>
 </div>
 <div class="card table-wrap">
 <table>
 <tr>
-<th>Project</th><th>Stage</th><th>Score</th><th>Confidence</th><th>Signals</th>
+<th>Project</th><th>Network</th><th>Stage</th><th>Score</th><th>Confidence</th><th>Signals</th>
 <th>Evidence</th><th>Source</th><th>Links</th><th>Contract</th>
 </tr>
 {rows}

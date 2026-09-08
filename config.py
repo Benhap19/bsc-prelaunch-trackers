@@ -143,7 +143,7 @@ PRE_CA_ENABLED = env_bool(
     True,
 )
 
-# Broad discovery mode stores many BSC leads for manual selection.
+# Broad discovery mode stores many supported-chain leads for manual selection.
 BROAD_DISCOVERY_MODE = env_bool(
     "BROAD_DISCOVERY_MODE",
     True,
@@ -302,23 +302,25 @@ X_MAX_RESULTS = max(
     min(100, env_int("X_MAX_RESULTS", 50)),
 )
 
-# High-intent queries are intentionally narrow so X does not become a generic crypto-news firehose.
+# Broad multi-chain discovery queries. Final pre-launch and live-market filters
+# decide what is kept; these queries intentionally surface more candidates.
 X_SEARCH_QUERIES = [
     q.strip()
     for q in env(
         "X_SEARCH_QUERIES",
-        '(BSC OR "BNB Chain" OR BNBChain OR "Binance Smart Chain") '
-        '(token OR coin OR project OR memecoin OR meme OR presale OR launch OR launching) '
+        '(BSC OR "BNB Chain" OR BNBChain OR "Binance Smart Chain" OR Base OR "Base Chain" OR Solana) '
+        '(token OR coin OR project OR memecoin OR meme OR presale OR launch OR launching OR soon OR upcoming) '
         '-is:retweet -is:reply|'
-        '(BSC OR "BNB Chain" OR BNBChain) '
-        '(building OR developing OR community OR roadmap OR website OR telegram OR whitelist) '
+        '(BSC OR "BNB Chain" OR Base OR "Base Chain" OR Solana) '
+        '(building OR developing OR community OR roadmap OR website OR telegram OR whitelist OR stealth OR fairlaunch) '
         '-is:retweet -is:reply|'
-        '(BSC OR "BNB Chain" OR BNBChain) '
-        '(soon OR upcoming OR coming OR announcement OR reveal OR presale OR fairlaunch OR stealth) '
+        '(BSC OR "BNB Chain" OR Base OR "Base Chain" OR Solana) '
+        '("coming soon" OR announcement OR reveal OR presale OR TGE OR "token launch" OR "launch date") '
         '-is:retweet -is:reply',
     ).split("|")
     if q.strip()
 ]
+
 
 
 # ============================================================================
@@ -843,6 +845,9 @@ BSC_KEYWORDS = [
     "bnb smart chain",
     "binance smart chain",
 ]
+
+BASE_KEYWORDS = ["base chain", "base network", "base l2", "on base", "built on base"]
+SOLANA_KEYWORDS = ["solana", "sol chain", "on sol", "built on solana", "solana chain"]
 
 LAUNCH_KEYWORDS = [
     "launching soon",
